@@ -13,13 +13,15 @@ git tag v0.1.2
 git push origin v0.1.2
 ```
 
-The tag must match the package version. The workflow creates a draft release, builds and checks Windows x64, Linux x64, macOS Apple Silicon and macOS Intel, and uploads their downloads directly to the draft. When all four pass, it downloads the complete set, calculates SHA256 checksums, adds the installation scripts and publishes the release as latest. The scripts then install that version automatically.
+The tag must match the package version. The workflow creates a draft release, builds and checks Windows x64, Linux x64, macOS Apple Silicon and macOS Intel, and uploads their downloads directly to the draft. When all four pass, it downloads the complete set, calculates SHA256 checksums, adds the installation scripts and publishes the release. It becomes latest when no newer stable version is already published, so a slow older build cannot downgrade the installation scripts.
 
 If a job fails, the release stays unpublished. Fix the problem before publishing. GitHub's **Re-run failed jobs** can retry transient runner failures; uploads to a draft replace only the matching platform files. Source fixes require a new version and tag. Published downloads are never replaced by the pipeline.
 
 ## Free GitHub accounts
 
 No paid service, personal access token or signing subscription is needed. The workflow uses the built-in `GITHUB_TOKEN` and standard hosted runners. GitHub provides free standard runner execution for public repositories. Large binaries go directly to Releases, which avoids the 500 MB GitHub Free Actions artifact allowance. No Actions artifacts are uploaded. Verification results remain in job logs and summaries; binary releases remain downloadable. Dependency caches use GitHub's normal bounded cache allowance.
+
+Main and pull request builds have read-only repository access. Only version-tag jobs can upload and publish releases.
 
 - [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 - [Standard hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)

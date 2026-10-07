@@ -558,7 +558,7 @@ kbd {
     box-shadow var(--fast) var(--ease);
 }
 
-.segmented label:hover input:not(:disabled) + span {
+.segmented label:hover input:not(:disabled, :checked) + span {
   color: var(--ink);
 }
 

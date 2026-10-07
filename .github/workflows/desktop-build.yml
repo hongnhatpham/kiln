@@ -1,0 +1,108 @@
+name: Native desktop verification
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform: windows
+            arch: x64
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - os: macos-15
+            platform: macos
+            arch: arm64
+          - os: macos-15-intel
+            platform: macos
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ELECTRON_BUILDER_COMPRESSION_LEVEL: "5"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - name: Linux package tools
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+      - run: pnpm package
+      - run: pnpm agent fixture --out artifacts/fixture.glb
+      - name: Verify Windows install and update
+        if: matrix.platform == 'windows'
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -ExecutablePath release/Kiln-Windows-x64-Portable.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -ExecutablePath release/Kiln-Windows-x64-Portable.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($kilnAttempt in 1..2) {
+            $setup = Start-Process -FilePath ./release/Kiln-Windows-x64-Setup.exe -ArgumentList '/S' -Wait -PassThru -WindowStyle Hidden
+            if ($setup.ExitCode) { exit $setup.ExitCode }
+          }
+      - name: Exercise packaged Windows app
+        if: matrix.platform == 'windows'
+        run: |
+          $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'Kiln.lnk'))
+          if (-not (Test-Path (Join-Path (Split-Path $shortcut.TargetPath) 'resources/app.asar'))) { throw 'Installed application or menu shortcut is missing.' }
+          pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable $shortcut.TargetPath
+      - name: Verify macOS install and update
+        if: matrix.platform == 'macos'
+        run: |
+          mkdir -p artifacts/local-release
+          cp release/Kiln-macOS-${{ matrix.arch }}.zip artifacts/local-release/
+          (cd artifacts/local-release && shasum -a 256 *.zip > SHA256SUMS.txt)
+          sed "s|^release_url=.*|release_url=file://$GITHUB_WORKSPACE/artifacts/local-release|" install.sh > artifacts/install-local.sh
+          sh artifacts/install-local.sh
+          sh artifacts/install-local.sh
+      - name: Exercise packaged macOS app
+        if: matrix.platform == 'macos'
+        run: pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable "$HOME/Applications/Kiln.app/Contents/MacOS/Kiln" ${{ matrix.arch == 'x64' && '--allow-no-graphics' || '' }}
+      - name: Install Linux package with sandbox enabled
+        if: matrix.platform == 'linux'
+        run: |
+          mkdir -p artifacts/local-release
+          cp release/Kiln-Linux-x64.deb artifacts/local-release/
+          (cd artifacts/local-release && sha256sum *.deb > SHA256SUMS.txt)
+          sed "s|^release_url=.*|release_url=file://$GITHUB_WORKSPACE/artifacts/local-release|" install.sh > artifacts/install-local.sh
+          printf 'y\n' | sh artifacts/install-local.sh
+          printf 'y\n' | sh artifacts/install-local.sh
+          test -f /usr/share/applications/kiln.desktop
+          ! grep -q -- '--no-sandbox' /usr/share/applications/kiln.desktop
+      - name: Exercise installed Linux app
+        if: matrix.platform == 'linux'
+        run: xvfb-run -a pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable /opt/Kiln/kiln --software-rendering
+      - name: Upload verified downloads to draft
+        if: inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/release.mjs upload ${{ matrix.platform }}-${{ matrix.arch }}
+      - name: Record verification
+        if: always()
+        shell: bash
+        run: |
+          if test -f artifacts/smoke/report.json; then
+            printf '### Installed desktop verification\n\n```json\n' >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts/smoke/report.json >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -27,6 +27,21 @@ export function validateAssets(assets, expected) {
   }
 }
 
+export function shouldPromote(tag, releases) {
+  const parts = (value) =>
+    /^v\d+\.\d+\.\d+$/.test(value) ? value.slice(1).split(".").map(BigInt) : null;
+  const version = parts(tag);
+  if (!version) throw new Error("Latest promotion requires a stable version tag.");
+  return !releases.some((item) => {
+    const other = parts(item.tagName);
+    if (item.isDraft || item.isPrerelease || !other) return false;
+    for (let index = 0; index < 3; index++) {
+      if (other[index] !== version[index]) return other[index] > version[index];
+    }
+    return false;
+  });
+}
+
 export async function release(action, platform) {
   const tag = process.env.GITHUB_REF_NAME;
   const repo = process.env.GITHUB_REPOSITORY;
@@ -36,11 +51,22 @@ export async function release(action, platform) {
   const gh = (...args) =>
     execFileSync("gh", [...args, "--repo", repo], { cwd: root, encoding: "utf8" });
   const view = () => JSON.parse(gh("release", "view", tag, "--json", "isDraft,assets"));
+  const list = () =>
+    JSON.parse(
+      execFileSync("gh", ["api", `repos/${repo}/releases`, "--paginate", "--slurp"], {
+        cwd: root,
+        encoding: "utf8",
+      }),
+    )
+      .flat()
+      .map((item) => ({
+        tagName: item.tag_name,
+        isDraft: item.draft,
+        isPrerelease: item.prerelease,
+      }));
   // Only modify an unpublished draft. Reruns of failed builds replace their own assets.
   if (action === "prepare") {
-    const releases = JSON.parse(
-      gh("release", "list", "--limit", "100", "--json", "tagName,isDraft"),
-    );
+    const releases = list();
     const existing = releases.find((item) => item.tagName === tag);
     if (existing && !existing.isDraft)
       throw new Error("This version is already published. Use a new version tag.");
@@ -109,7 +135,8 @@ export async function release(action, platform) {
         "--clobber",
       );
       validateAssets(view().assets, [...names, "SHA256SUMS.txt"]);
-      gh("release", "edit", tag, "--draft=false", "--latest");
+      // The workflow serializes publication so this check and promotion cannot race.
+      gh("release", "edit", tag, "--draft=false", `--latest=${shouldPromote(tag, list())}`);
     } finally {
       // mkdtemp creates this folder directly inside this checkout, never from user input.
       await fs.rm(folder, { recursive: true, force: true });

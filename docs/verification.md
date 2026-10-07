@@ -3,7 +3,7 @@
 Verified on Windows 11 with Blender 5.2.
 
 - Type checks, lint and formatting pass.
-- All 41 logic tests pass, including texture vector handling, linear-light color resize, transparent pixels, 16-bit PNG, material preservation, shared texture roles, source sidecars, hard links, export rollback, cooperative shutdown, installer checksums and release guards.
+- All 42 logic tests pass, including texture vector handling, linear-light color resize, transparent pixels, 16-bit PNG, material preservation, shared texture roles, source sidecars, hard links, export rollback, cooperative shutdown, installer checksums and release guards.
 - Actual Electron workflows cover GLB and USDZ import, optimization, source/result comparison, close-up and raking-light views, orbit and zoom, keyboard divider control, custom settings, error recovery, cancellation and export with a matching recipe fingerprint.
 - Original files remain byte-identical after the desktop workflows.
 - A representative 139 MB USDZ becomes a 15.2 MB public GLB through the app, retaining all 99,999 triangles and 56,684 vertices. Khronos validation reports zero errors.
