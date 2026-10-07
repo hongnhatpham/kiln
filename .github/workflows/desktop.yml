@@ -55,6 +55,7 @@ jobs:
     concurrency:
       group: desktop-publication
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
