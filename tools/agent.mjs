@@ -160,10 +160,7 @@ async function smoke() {
     delete desktopEnv.KILN_DEV_URL;
     desktop = await _electron.launch({
       executablePath: executable ? path.resolve(executable) : require("electron"),
-      args: [
-        ...(executable ? [] : [root]),
-        ...(process.env.CI && process.platform === "linux" ? ["--no-sandbox"] : []),
-      ],
+      args: [...(executable ? [] : [root])],
       env: desktopEnv,
       timeout: 60000,
     });

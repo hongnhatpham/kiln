@@ -35,6 +35,7 @@ function Assert-SafeDirectory([string]$Path) {
 
 $temporary = $null
 $pending = $null
+$backup = $null
 try {
     if (-not [Environment]::Is64BitOperatingSystem) { throw 'Kiln requires 64-bit Windows.' }
     if ($ExecutablePath) {
@@ -84,7 +85,9 @@ try {
     if (Test-Path -LiteralPath $target) {
         $item = Get-Item -LiteralPath $target -Force
         if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Unsafe executable destination: $target" }
-        [IO.File]::Replace($pending, $target, $null)
+        # PowerShell 5.1 converts a null string argument to an empty backup path.
+        $backup = Join-Path $installDir ('Kiln-' + [guid]::NewGuid().ToString('N') + '.bak')
+        [IO.File]::Replace($pending, $target, $backup)
     } else {
         [IO.File]::Move($pending, $target)
     }
@@ -103,6 +106,7 @@ try {
     exit 1
 } finally {
     if ($pending -and (Test-Path -LiteralPath $pending)) { Remove-Item -LiteralPath $pending -Force }
+    if ($backup -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Force }
     if ($temporary -and (Test-Path -LiteralPath $temporary)) {
         # Only remove the exact temporary directory created by this invocation.
         $resolvedTemporary = (Get-Item -LiteralPath $temporary -Force).FullName

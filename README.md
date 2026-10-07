@@ -8,16 +8,16 @@ Open a model, choose a quality preset, inspect the result, and export a GLB with
 
 Download from [the latest release](https://github.com/hongnhatpham/kiln/releases/latest). No Node, pnpm or developer tools are needed.
 
-| System               | Easiest installation                                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Windows 10/11, x64   | Open `Kiln-Windows-x64-Setup.exe`. The installer adds Kiln to the Start menu.                                 |
-| macOS, Apple Silicon | Open `Kiln-macOS-arm64.dmg` and drag Kiln to Applications.                                                    |
-| macOS, Intel         | Open `Kiln-macOS-x64.dmg` and drag Kiln to Applications.                                                      |
-| Linux, x64           | Run the script below for an AppImage with an app menu entry. Debian/Ubuntu users can also install the `.deb`. |
+| System               | Easiest installation                                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Windows 10/11, x64   | Open `Kiln-Windows-x64-Setup.exe`. The installer adds Kiln to the Start menu.                                         |
+| macOS, Apple Silicon | Open `Kiln-macOS-arm64.dmg` and drag Kiln to Applications.                                                            |
+| macOS, Intel         | Open `Kiln-macOS-x64.dmg` and drag Kiln to Applications.                                                              |
+| Linux, x64           | Run the script below. It chooses the Debian/Ubuntu `.deb` or Fedora/RHEL/openSUSE `.rpm` and installs the menu entry. |
 
 ### Install with a script
 
-These scripts install or update Kiln for your user account, verify the release checksum, and add it to your app menu. They do not make Kiln run automatically at login.
+These scripts install or update Kiln, verify the release checksum, and add it to your app menu. Windows and macOS install for your user account. Linux uses your normal package manager and may ask for your administrator password. They do not make Kiln run automatically at login.
 
 **Windows, PowerShell:**
 
@@ -35,9 +35,9 @@ sh /tmp/kiln-install.sh
 
 You can inspect the downloaded script before running it. Add `-DryRun` on Windows or `--dry-run` on macOS/Linux to see its paths. Run the same command again to update to the latest release, with Kiln closed.
 
-Script installations live in `%LOCALAPPDATA%\Programs\Kiln`, `~/Applications/Kiln.app`, or `~/.local/opt/kiln`. To remove one, delete that app and its Kiln menu shortcut. Windows Setup and Debian packages use their normal system uninstallers.
+Script installations on Windows and macOS live in `%LOCALAPPDATA%\Programs\Kiln` or `~/Applications/Kiln.app`. To remove one, delete that app and its Kiln menu shortcut. Windows Setup and Linux packages use their normal system uninstallers. Choose either Windows Setup or the script; close Kiln before updating.
 
-Initial builds are unsigned. Windows may show SmartScreen; macOS may require approval in **System Settings > Privacy & Security** after trying to open Kiln. The scripts preserve OS security checks. Linux needs a desktop environment and standard Electron libraries; AppImage installation uses extraction mode so FUSE is optional. Linux ARM and native Windows ARM packages are not included yet.
+Initial builds are unsigned. Windows may show SmartScreen; macOS may require approval in **System Settings > Privacy & Security** after trying to open Kiln. The scripts preserve OS security checks. Linux needs a desktop environment; its package manager installs the required libraries. Linux ARM and native Windows ARM packages are not included yet.
 
 GLB and glTF processing is built in. Install [Blender](https://www.blender.org/download/) separately for USDZ and other authoring formats. Kiln detects it or lets you choose it through **Locate Blender**.
 

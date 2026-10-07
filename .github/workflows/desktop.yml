@@ -45,17 +45,44 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
+      - name: Linux package tools
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
       - run: pnpm package
       - run: pnpm agent fixture --out artifacts/fixture.glb
+      - name: Verify Windows install and update
+        if: matrix.platform == 'windows'
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -ExecutablePath release/Kiln-Windows-x64-Portable.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -ExecutablePath release/Kiln-Windows-x64-Portable.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $setup = Start-Process -FilePath ./release/Kiln-Windows-x64-Setup.exe -ArgumentList '/S' -Wait -PassThru -WindowStyle Hidden
+          if ($setup.ExitCode) { exit $setup.ExitCode }
       - name: Exercise packaged Windows app
         if: matrix.platform == 'windows'
-        run: pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable release/win-unpacked/Kiln.exe
+        run: |
+          $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'Kiln.lnk'))
+          if (-not (Test-Path (Join-Path (Split-Path $shortcut.TargetPath) 'resources/app.asar'))) { throw 'Installed application or menu shortcut is missing.' }
+          pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable $shortcut.TargetPath
+      - name: Verify macOS install and update
+        if: matrix.platform == 'macos'
+        run: |
+          mkdir -p artifacts/local-release
+          cp release/Kiln-macOS-${{ matrix.arch }}.zip artifacts/local-release/
+          (cd artifacts/local-release && shasum -a 256 *.zip > SHA256SUMS.txt)
+          sed "s|^release_url=.*|release_url=file://$GITHUB_WORKSPACE/artifacts/local-release|" install.sh > artifacts/install-local.sh
+          sh artifacts/install-local.sh
+          sh artifacts/install-local.sh
       - name: Exercise packaged macOS app
         if: matrix.platform == 'macos'
-        run: pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable release/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}/Kiln.app/Contents/MacOS/Kiln
-      - name: Exercise packaged Linux app
+        run: pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable "$HOME/Applications/Kiln.app/Contents/MacOS/Kiln"
+      - name: Install Linux package with sandbox enabled
         if: matrix.platform == 'linux'
-        run: xvfb-run -a pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable release/linux-unpacked/kiln
+        run: sudo apt-get install -y ./release/Kiln-Linux-x64.deb
+      - name: Exercise installed Linux app
+        if: matrix.platform == 'linux'
+        run: xvfb-run -a pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable /opt/Kiln/kiln
       - uses: actions/upload-artifact@v4
         with:
           name: Kiln-${{ matrix.platform }}-${{ matrix.arch }}
@@ -63,8 +90,8 @@ jobs:
             release/Kiln-*.exe
             release/Kiln-*.zip
             release/Kiln-*.dmg
-            release/Kiln-*.AppImage
             release/Kiln-*.deb
+            release/Kiln-*.rpm
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
