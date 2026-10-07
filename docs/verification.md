@@ -10,6 +10,8 @@ Verified on Windows 11 with Blender 5.2.
 - The direct USD conversion matches the independently checked reference geometry, UVs, material values, transforms and original texture bytes.
 - Independent visual review accepted both the interface and the app's derivative. Whole-object views and fine close-ups remain close to the original. Extreme magnification shows expected fine-grain softening from the 8K to 4K resize.
 - A synthetic OBJ exercises the Blender fallback importer successfully.
+- The packaged Windows application passes the full USDZ workflow and interaction checks. Its bundled renderer matches the verified build.
+- The portable executable extracts, opens the real interface and connects to its packaged processing engine successfully.
 
 The verification artifacts stay local in `artifacts/`. Agent commands reproduce desktop checks without publishing source assets.
 

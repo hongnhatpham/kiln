@@ -278,6 +278,75 @@ async function smoke() {
   }
 }
 
+// NSIS launchers do not forward the inspector pipe that Playwright's Electron driver expects.
+async function launchCheck() {
+  const executable = value("--executable");
+  if (!executable) throw new Error("Specify --executable with the packaged application.");
+  const { spawn } = await import("node:child_process");
+  const { createServer } = await import("node:net");
+  const { chromium } = await import("playwright");
+  const server = createServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.KILN_DEV_URL;
+  const child = spawn(
+    path.resolve(executable),
+    [`--remote-debugging-port=${port}`, "--remote-debugging-address=127.0.0.1"],
+    { env, windowsHide: true, stdio: "ignore" },
+  );
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  const errors = [];
+  child.on("error", (error) => errors.push(String(error)));
+  let browser;
+  try {
+    let available = false;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      if (errors.length || child.exitCode !== null)
+        throw new Error("The portable application stopped before opening.");
+      try {
+        available = (
+          await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) })
+        ).ok;
+      } catch {}
+      if (available) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!available) throw new Error("The portable application did not expose its test connection.");
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    const context = browser.contexts()[0];
+    const page = context.pages()[0] ?? (await context.waitForEvent("page", { timeout: 30000 }));
+    await page.waitForFunction(() => Boolean(window.kiln), {}, { timeout: 30000 });
+    await page
+      .getByRole("button", { name: "Open asset", exact: true })
+      .waitFor({ state: "visible" });
+    const environment = await page.evaluate(() => window.kiln.environment());
+    const outputDir = path.resolve(value("--out") ?? "artifacts/portable-launch");
+    await fs.mkdir(outputDir, { recursive: true });
+    await page.screenshot({ path: path.join(outputDir, "portable-ready.png") });
+    const report = {
+      executable: path.resolve(executable),
+      environment,
+      checks: [
+        "portable launcher extraction",
+        "packaged renderer ready",
+        "real preload and engine environment",
+      ],
+      limit:
+        "Full import, optimization and export are exercised separately by the packaged desktop smoke command.",
+    };
+    await fs.writeFile(path.join(outputDir, "report.json"), JSON.stringify(report, null, 2));
+    print(report);
+    await page.close();
+  } finally {
+    await browser?.close();
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+    if (child.exitCode === null) child.kill();
+  }
+}
+
 try {
   switch (command) {
     case "env": {
@@ -314,6 +383,9 @@ try {
     case "smoke":
       await smoke();
       break;
+    case "launch-check":
+      await launchCheck();
+      break;
     default:
       print({
         commands: {
@@ -323,6 +395,8 @@ try {
             "pnpm agent optimize --input C:/path/model.usdz --preset detailed --out artifacts/exports",
           smoke:
             "pnpm agent smoke --input C:/path/model.usdz --out artifacts/desktop-smoke [--exercise] [--executable release/win-unpacked/Kiln.exe]",
+          "launch-check":
+            "pnpm agent launch-check --executable release/Kiln-0.1.0-Windows.exe --out artifacts/portable-launch",
         },
         note: "Build first with pnpm build. Commands process files locally and never overwrite the input.",
       });
