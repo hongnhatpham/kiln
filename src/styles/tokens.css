@@ -1,0 +1,74 @@
+/* Kiln design tokens. Mirrors DESIGN.md. */
+:root {
+  /* Surfaces: warm gallery neutrals */
+  --paper: #f6f5f1;
+  --surface: #fcfbf8;
+  --well: #efede7;
+  --rule: #e2ded5;
+  --rule-strong: #cbc6ba;
+
+  /* Ink */
+  --ink: #1d1e20;
+  --ink-2: #57554f;
+  --ink-3: #8a867d;
+
+  /* Accents: archive blue for action and focus, ochre for caution */
+  --blue: #22508a;
+  --blue-strong: #1a3f6e;
+  --blue-tint: #e5ebf3;
+  --ochre: #8f6416;
+  --ochre-tint: #f4ead6;
+  --brick: #a13a2c;
+  --brick-tint: #f6e3df;
+
+  /* Stage: a seamless photographic sweep */
+  --stage-top: #f1efea;
+  --stage-bottom: #d9d5cc;
+
+  --font-display: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --font-ui: "Public Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --shadow-float: 0 1px 2px rgb(29 30 32 / 0.06), 0 4px 14px rgb(29 30 32 / 0.08);
+  --shadow-card: 0 1px 2px rgb(29 30 32 / 0.05), 0 12px 32px rgb(29 30 32 / 0.1);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--blue);
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --fast: 120ms;
+  --base: 180ms;
+
+  --panel-width: 360px;
+  --header-height: 52px;
+}
+
+@media (max-width: 1180px) {
+  :root {
+    --panel-width: 320px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --fast: 0ms;
+    --base: 0ms;
+  }
+}

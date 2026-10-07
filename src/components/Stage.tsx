@@ -1,0 +1,538 @@
+import {
+  AlertTriangle,
+  ChevronsLeftRight,
+  FileUp,
+  RotateCcw,
+  ScanSearch,
+  Sun,
+  Sunrise,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import type {
+  AssetInfo,
+  EnvironmentInfo,
+  OptimizationResult,
+  ProgressUpdate,
+  TextureInfo,
+} from "../../shared/contracts.ts";
+import type { AppAction, AppError, Busy } from "../App.tsx";
+import { formatBytes, formatPixels } from "../lib/format.ts";
+import { roleTexture } from "../lib/options.ts";
+import {
+  ComparisonViewer,
+  type Lighting,
+  type Slot,
+  type SlotStatus,
+  type ViewMode,
+} from "../viewer/ComparisonViewer.ts";
+import { ProgressBar } from "./ProgressBar.tsx";
+
+/** Above this combined estimate, compare one model at a time instead of holding both in memory. */
+const BOTH_MODELS_BUDGET = 1.5 * 1024 ** 3;
+const FALLBACK_FORMATS = ["usdz", "glb", "gltf", "obj", "fbx", "ply", "stl"];
+
+interface StageProps {
+  asset: AssetInfo | null;
+  result: OptimizationResult | null;
+  busy: Busy | null;
+  progress: ProgressUpdate | null;
+  error: AppError | null;
+  environment: EnvironmentInfo | null;
+  onDropFile(file: File): void;
+  onChoose(): void;
+  onCancel(): void;
+  onAction(action: AppAction): void;
+}
+
+const ACTION_LABEL: Record<AppAction, string> = {
+  choose: "Choose another file",
+  blender: "Locate Blender",
+  "retry-optimize": "Try again",
+  dismiss: "Dismiss",
+};
+
+function textureSpec(texture: TextureInfo | undefined): string {
+  if (!texture) return "";
+  const format = texture.mimeType.replace("image/", "").toUpperCase().replace("JPEG", "JPG");
+  return `${formatPixels(Math.max(texture.width, texture.height))} ${format}`;
+}
+
+function isTyping(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName))
+  );
+}
+
+export function Stage({
+  asset,
+  result,
+  busy,
+  progress,
+  error,
+  environment,
+  onDropFile,
+  onChoose,
+  onCancel,
+  onAction,
+}: StageProps) {
+  const canvasHost = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<ComparisonViewer | null>(null);
+  const [viewerKey, setViewerKey] = useState(0);
+  const [slots, setSlots] = useState<Record<Slot, SlotStatus>>({
+    source: { state: "empty" },
+    optimized: { state: "empty" },
+  });
+  const [mode, setMode] = useState<ViewMode>("source");
+  const [split, setSplit] = useState(0.5);
+  const [lighting, setLighting] = useState<Lighting>("studio");
+  const [scale, setScale] = useState<number | null>(null);
+  const [contextLost, setContextLost] = useState(false);
+  const [lowMemory, setLowMemory] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [coach, setCoach] = useState(false);
+
+  const fitsBoth =
+    !lowMemory && (!asset || !result || asset.gpuBytes + result.gpuBytes <= BOTH_MODELS_BUDGET);
+  const view: ViewMode = result ? (mode === "split" && !fitsBoth ? "optimized" : mode) : "source";
+  const wantSource = !!asset && (view !== "optimized" || (fitsBoth && !!result));
+  const wantOptimized = !!result && (view !== "source" || fitsBoth);
+
+  // Viewer lifecycle. A new key rebuilds it, which is how a lost graphics context recovers.
+  useEffect(() => {
+    const host = canvasHost.current;
+    if (!host) return;
+    const viewer = new ComparisonViewer(host, {
+      onSlot: (slot, status) => setSlots((current) => ({ ...current, [slot]: status })),
+      onScale: (value) => setScale(value === null ? null : Number(value.toPrecision(2))),
+      onContextLost: () => {
+        setContextLost(true);
+        setLowMemory(true);
+      },
+    });
+    viewerRef.current = viewer;
+    setSlots({ source: { state: "empty" }, optimized: { state: "empty" } });
+    return () => {
+      viewer.dispose();
+      viewerRef.current = null;
+    };
+  }, [viewerKey]);
+
+  // A new source asset resets framing and the texel reference.
+  const colorWidth = roleTexture(asset, "color")?.width ?? 0;
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.setModel("optimized", null);
+    viewer.setModel("source", null);
+    viewer.resetAsset(colorWidth);
+  }, [viewerKey, asset?.id, colorWidth]);
+  useEffect(() => setLowMemory(false), [asset?.id]);
+
+  // Load what the current view needs. Unload first so two large textures sets never overlap needlessly.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const source = wantSource && asset ? asset.previewUrl : null;
+    const optimized = wantOptimized && result ? result.previewUrl : null;
+    if (!source) viewer.setModel("source", null);
+    if (!optimized) viewer.setModel("optimized", null);
+    if (source) viewer.setModel("source", source);
+    if (optimized) viewer.setModel("optimized", optimized);
+  }, [viewerKey, asset, result, wantSource, wantOptimized]);
+
+  // A fresh result opens the comparison.
+  useEffect(() => {
+    if (!result) return setMode("source");
+    setMode(fitsBoth ? "split" : "optimized");
+    setSplit(0.5);
+    setCoach(true);
+    // Chosen once per result: later memory changes should not flip the user's view.
+  }, [result?.id]);
+
+  useEffect(() => viewerRef.current?.setMode(view), [view, viewerKey]);
+  useEffect(() => viewerRef.current?.setSplit(split), [split, viewerKey]);
+  useEffect(() => viewerRef.current?.setLighting(lighting), [lighting, viewerKey]);
+
+  const ready = slots.source.state === "ready" || slots.optimized.state === "ready";
+
+  // Keyboard shortcuts for the viewport.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey || isTyping(event.target)) return;
+      const key = event.key.toLowerCase();
+      if (key === "1" && asset) setMode("source");
+      else if (key === "2" && result && fitsBoth) setMode("split");
+      else if (key === "3" && result) setMode("optimized");
+      else if (key === "r") viewerRef.current?.resetView();
+      else if (key === "t") viewerRef.current?.showTexels();
+      else if (key === "l") setLighting((value) => (value === "studio" ? "raking" : "studio"));
+      else return;
+      setCoach(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [asset, result, fitsBoth]);
+
+  // Files can be dropped anywhere in the window.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
+    const enter = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth += 1;
+      if (!busy) setDragging(true);
+    };
+    const over = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
+    };
+    const leave = () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragging(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth = 0;
+      setDragging(false);
+      const file = event.dataTransfer?.files[0];
+      if (file && !busy) onDropFile(file);
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+    };
+  }, [busy, onDropFile]);
+
+  const moveDivider = useCallback((clientX: number) => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setSplit(Math.min(0.98, Math.max(0.02, (clientX - rect.left) / rect.width)));
+  }, []);
+
+  const onDividerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCoach(false);
+  };
+  const onDividerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) moveDivider(event.clientX);
+  };
+  const onDividerKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 0.1 : 0.02;
+    const next = { ArrowLeft: split - step, ArrowRight: split + step, Home: 0.02, End: 0.98 }[
+      event.key
+    ];
+    if (next === undefined) return;
+    event.preventDefault();
+    setSplit(Math.min(0.98, Math.max(0.02, next)));
+  };
+
+  const sourceSpec = textureSpec(roleTexture(asset, "color"));
+  const optimizedSpec = textureSpec(result?.textures.find((texture) => texture.role === "color"));
+  const loadingSlot = (["source", "optimized"] as Slot[]).find(
+    (slot) => slots[slot].state === "loading" && (slot === "source" ? wantSource : wantOptimized),
+  );
+  const loading = loadingSlot
+    ? (slots[loadingSlot] as Extract<SlotStatus, { state: "loading" }>)
+    : null;
+  const failedSlot = (["source", "optimized"] as Slot[]).find(
+    (slot) => slots[slot].state === "error",
+  );
+  const importing = busy?.kind === "import";
+  const formats = (
+    environment?.supportedFormats.length ? environment.supportedFormats : FALLBACK_FORMATS
+  ).map((f) => f.replace(/^\./, "").toUpperCase());
+  const splitTitle = fitsBoth
+    ? "Split view (2)"
+    : `Showing both would need about ${formatBytes((asset?.gpuBytes ?? 0) + (result?.gpuBytes ?? 0))} of graphics memory. Switch between them instead.`;
+
+  return (
+    <div
+      ref={stageRef}
+      className="stage"
+      data-empty={!asset || undefined}
+      data-dragging={dragging || undefined}
+      onPointerDown={() => setCoach(false)}
+    >
+      <div ref={canvasHost} className="stage-canvas" key={viewerKey} />
+
+      {asset && view === "split" && (
+        <>
+          <div className="split-label split-label-left">
+            Source <span>{sourceSpec}</span>
+          </div>
+          <div className="split-label split-label-right">
+            Optimized <span>{optimizedSpec}</span>
+          </div>
+          <div
+            className="divider"
+            style={{ left: `${split * 100}%` }}
+            role="slider"
+            tabIndex={0}
+            aria-label="Comparison divider. Source on the left, optimized on the right."
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(split * 100)}
+            aria-valuetext={`${Math.round(split * 100)}% source`}
+            onPointerDown={onDividerDown}
+            onPointerMove={onDividerMove}
+            onKeyDown={onDividerKey}
+          >
+            <span className="divider-handle">
+              <ChevronsLeftRight size={14} aria-hidden="true" />
+            </span>
+          </div>
+        </>
+      )}
+
+      {asset && view !== "split" && ready && (
+        <div className="split-label split-label-left">
+          {view === "source" ? "Source" : "Optimized"}{" "}
+          <span>{view === "source" ? sourceSpec : optimizedSpec}</span>
+        </div>
+      )}
+
+      {asset && (
+        <div className="stage-toolbar stage-toolbar-top" role="toolbar" aria-label="Comparison">
+          <fieldset className="segmented segmented-floating">
+            <legend className="sr-only">Show</legend>
+            {(
+              [
+                ["source", "Source", "1", true, "Source (1)"],
+                [
+                  "split",
+                  "Split",
+                  "2",
+                  !!result && fitsBoth,
+                  result ? splitTitle : "Optimize to compare",
+                ],
+                [
+                  "optimized",
+                  "Optimized",
+                  "3",
+                  !!result,
+                  result ? "Optimized (3)" : "Optimize to compare",
+                ],
+              ] as const
+            ).map(([value, label, key, enabled, title]) => (
+              <label key={value} title={title} data-disabled={!enabled || undefined}>
+                <input
+                  type="radio"
+                  name="view"
+                  value={value}
+                  checked={view === value}
+                  disabled={!enabled}
+                  onChange={() => setMode(value)}
+                />
+                <span>
+                  {label}
+                  <kbd>{key}</kbd>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        </div>
+      )}
+
+      {asset && (
+        <div className="stage-toolbar stage-toolbar-light">
+          <fieldset className="segmented segmented-floating">
+            <legend className="sr-only">Lighting</legend>
+            {(
+              [
+                ["studio", "Studio", Sun, "Even studio light (L to switch)"],
+                [
+                  "raking",
+                  "Raking",
+                  Sunrise,
+                  "Low raking light reveals relief and normal map detail (L to switch)",
+                ],
+              ] as const
+            ).map(([value, label, Icon, title]) => (
+              <label key={value} title={title}>
+                <input
+                  type="radio"
+                  name="lighting"
+                  value={value}
+                  checked={lighting === value}
+                  onChange={() => setLighting(value)}
+                />
+                <span>
+                  <Icon size={14} aria-hidden="true" />
+                  {label}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        </div>
+      )}
+
+      {asset && ready && (
+        <>
+          <div className="stage-hint" aria-hidden="true">
+            <span className="stage-hint-gesture">
+              Drag to orbit, scroll to zoom, double-click to focus
+            </span>
+            {scale !== null && (
+              <span className="stage-scale">
+                1 source texel ≈{" "}
+                {scale < 0.1 ? "under 0.1" : scale < 10 ? scale.toFixed(1) : Math.round(scale)} px
+              </span>
+            )}
+          </div>
+          <div className="stage-toolbar stage-toolbar-bottom">
+            <button
+              type="button"
+              className="tool"
+              onClick={() => viewerRef.current?.showTexels()}
+              disabled={scale === null}
+              title="Zoom until one source texture pixel fills about one screen pixel (T)"
+            >
+              <ScanSearch size={15} aria-hidden="true" />
+              1:1 detail
+            </button>
+            <button
+              type="button"
+              className="tool"
+              onClick={() => viewerRef.current?.resetView()}
+              title="Reset view (R)"
+            >
+              <RotateCcw size={15} aria-hidden="true" />
+              Reset
+            </button>
+          </div>
+        </>
+      )}
+
+      {coach && view === "split" && ready && (
+        <p className="coach" role="status">
+          Drag the divider to compare. Try <strong>1:1 detail</strong> and raking light before you
+          export.
+        </p>
+      )}
+
+      {loading && !importing && (
+        <div className="stage-status" role="status">
+          <span>Loading {loadingSlot === "source" ? "source" : "optimized"} preview</span>
+          <ProgressBar value={loading.progress} />
+        </div>
+      )}
+
+      {!asset && !importing && !error && (
+        <div className="drop">
+          <div className="drop-card">
+            <FileUp size={22} strokeWidth={1.5} aria-hidden="true" className="drop-icon" />
+            <h1 className="drop-title">Open a 3D scan</h1>
+            <p className="drop-text">
+              Drop a file anywhere in this window, or choose one. Kiln works on a copy and never
+              changes your original.
+            </p>
+            <button type="button" className="button button-primary" onClick={onChoose}>
+              Choose file
+            </button>
+            <p className="drop-formats" aria-label="Supported formats">
+              {formats.join("  ")}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {importing && (
+        <div className="overlay">
+          <div className="overlay-card" role="status" aria-live="polite">
+            <p className="overlay-title">Opening {busy.fileName ?? "asset"}</p>
+            <p className="overlay-text">{progress?.message ?? "Reading the source file"}</p>
+            <ProgressBar value={progress ? progress.percent / 100 : null} />
+            <button type="button" className="button button-quiet" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className={asset ? "banner-wrap" : "overlay"}>
+          <div className={asset ? "banner" : "overlay-card"} role="alert">
+            <AlertTriangle size={18} aria-hidden="true" className="alert-icon" />
+            <div className="alert-body">
+              <p className="overlay-title">{error.title}</p>
+              <p className="overlay-text">{error.message}</p>
+              <div className="alert-actions">
+                {error.actions.map((action, index) => (
+                  <button
+                    key={action}
+                    type="button"
+                    className={
+                      index === 0 && action !== "dismiss"
+                        ? "button button-primary"
+                        : "button button-quiet"
+                    }
+                    onClick={() => onAction(action)}
+                  >
+                    {ACTION_LABEL[action]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(contextLost || failedSlot) && !error && (
+        <div className="overlay">
+          <div className="overlay-card" role="alert">
+            <AlertTriangle size={18} aria-hidden="true" className="alert-icon" />
+            <div className="alert-body">
+              <p className="overlay-title">
+                {contextLost
+                  ? "The graphics card ran out of memory"
+                  : "The preview could not be shown"}
+              </p>
+              <p className="overlay-text">
+                {contextLost
+                  ? "Kiln will now show one model at a time. Closing other 3D apps also helps."
+                  : `${failedSlot === "source" ? "Source" : "Optimized"} preview: ${(slots[failedSlot!] as Extract<SlotStatus, { state: "error" }>).message}`}
+              </p>
+              <div className="alert-actions">
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => {
+                    setContextLost(false);
+                    setViewerKey((key) => key + 1);
+                  }}
+                >
+                  Reload preview
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dragging && (
+        <div className="drop-target" aria-hidden="true">
+          <span>{asset ? "Drop to open this file instead" : "Drop to open"}</span>
+        </div>
+      )}
+    </div>
+  );
+}
