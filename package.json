@@ -14,6 +14,7 @@
   "type": "module",
   "main": "dist/desktop/electron/main.js",
   "scripts": {
+    "postinstall": "install-electron",
     "dev": "node tools/dev.mjs",
     "dev:ui": "vp dev --host 127.0.0.1",
     "build": "tsc -p tsconfig.desktop.json && vp build",
