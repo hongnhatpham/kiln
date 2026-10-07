@@ -1,0 +1,100 @@
+# Opens a GitHub issue when CI fails on the default branch (or a release tag, schedule or manual
+# run), adds a comment to that issue on further failures, and closes it once the workflow passes
+# again. One issue per workflow, labelled ci-failure. Pull request runs are left to the PR.
+name: CI failure issue
+
+on:
+  workflow_run:
+    # The workflows to watch, by name. Add new ones here.
+    workflows: ["Desktop apps", "Native desktop verification"]
+    types: [completed]
+
+permissions:
+  actions: read
+  issues: write
+
+concurrency:
+  group: ci-failure-issue
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    if: >-
+      !startsWith(github.event.workflow_run.event, 'pull_request') &&
+      contains(fromJSON('["success","failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion)
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const repo = context.repo;
+            const main = context.payload.repository.default_branch;
+            // A push to another branch only counts when it is a tag (a release build).
+            if (run.event === "push" && run.head_branch !== main) {
+              try {
+                await github.rest.git.getRef({ ...repo, ref: `tags/${run.head_branch}` });
+              } catch {
+                core.info(`Skipping a push to ${run.head_branch}.`);
+                return;
+              }
+            }
+            const label = "ci-failure";
+            const title = `CI failing: ${run.name}`;
+            const open = (
+              await github.paginate(github.rest.issues.listForRepo, {
+                ...repo,
+                state: "open",
+                labels: label,
+                per_page: 100,
+              })
+            ).filter((issue) => !issue.pull_request && issue.title === title);
+            const where = `\`${run.head_branch}\` at ${run.head_sha.slice(0, 7)}`;
+            if (run.conclusion === "success") {
+              for (const issue of open) {
+                await github.rest.issues.createComment({
+                  ...repo,
+                  issue_number: issue.number,
+                  body: `Passing again on ${where}: ${run.html_url}`,
+                });
+                await github.rest.issues.update({
+                  ...repo,
+                  issue_number: issue.number,
+                  state: "closed",
+                  state_reason: "completed",
+                });
+              }
+              return;
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+            const failed = jobs
+              .filter((job) => ["failure", "timed_out"].includes(job.conclusion))
+              .map((job) => {
+                const step = (job.steps ?? []).find((s) => s.conclusion === "failure");
+                return `- [${job.name}](${job.html_url})${step ? `, at step "${step.name}"` : ""}`;
+              });
+            const commit = (run.head_commit?.message ?? "").split("\n")[0];
+            const body = [
+              `**${run.name}** ${run.conclusion.replace("_", " ")} on ${where} (${run.event}).`,
+              "",
+              `Run: ${run.html_url}`,
+              commit ? `Commit: ${commit}` : "",
+              ...(failed.length ? ["", "Failed jobs:", ...failed] : []),
+            ].join("\n");
+            if (open.length) {
+              await github.rest.issues.createComment({ ...repo, issue_number: open[0].number, body });
+              return;
+            }
+            try {
+              await github.rest.issues.createLabel({
+                ...repo,
+                name: label,
+                color: "d73a4a",
+                description: "Opened automatically when CI fails",
+              });
+            } catch {}
+            await github.rest.issues.create({ ...repo, title, labels: [label], body });
