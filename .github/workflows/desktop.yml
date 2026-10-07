@@ -79,7 +79,15 @@ jobs:
         run: pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable "$HOME/Applications/Kiln.app/Contents/MacOS/Kiln"
       - name: Install Linux package with sandbox enabled
         if: matrix.platform == 'linux'
-        run: sudo apt-get install -y ./release/Kiln-Linux-x64.deb
+        run: |
+          mkdir -p artifacts/local-release
+          cp release/Kiln-Linux-x64.deb artifacts/local-release/
+          (cd artifacts/local-release && sha256sum *.deb > SHA256SUMS.txt)
+          sed "s|^release_url=.*|release_url=file://$GITHUB_WORKSPACE/artifacts/local-release|" install.sh > artifacts/install-local.sh
+          sh artifacts/install-local.sh
+          sh artifacts/install-local.sh
+          test -f /usr/share/applications/kiln.desktop
+          ! grep -q -- '--no-sandbox' /usr/share/applications/kiln.desktop
       - name: Exercise installed Linux app
         if: matrix.platform == 'linux'
         run: xvfb-run -a pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable /opt/Kiln/kiln
