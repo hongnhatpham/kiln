@@ -26,7 +26,7 @@ Go to [the download page](https://github.com/hongnhatpham/kiln/releases/latest) 
 
 ### The first time you open Kiln
 
-Kiln is not yet signed with a paid developer certificate, so your computer may ask you to confirm that you trust it. This happens once.
+Kiln is not yet signed with a paid developer certificate, so your computer may ask you to confirm that you trust it when opening a new version.
 
 - **Windows:** if you see "Windows protected your PC", click **More info**, then **Run anyway**.
 - **macOS:** if Kiln is blocked, open **System Settings > Privacy & Security**, scroll down and click **Open Anyway**.
