@@ -60,7 +60,12 @@ export function checkResourceUris(
     }
     const resolved = path.resolve(base, decoded);
     const relative = path.relative(base, resolved);
-    if (path.isAbsolute(decoded) || relative.startsWith("..") || path.isAbsolute(relative)) {
+    if (
+      path.isAbsolute(decoded) ||
+      path.win32.isAbsolute(decoded) ||
+      relative.startsWith("..") ||
+      path.isAbsolute(relative)
+    ) {
       throw new KilnError(
         "unsafe-path",
         `The model links to "${uri}", which is outside its folder. Move the model and its files into one folder and open it again.`,

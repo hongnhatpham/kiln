@@ -275,6 +275,8 @@ test("refuses links outside the model folder or to the network", async () => {
     "../secret.bin",
     "https://example.com/a.bin",
     "C:/Windows/win.ini",
+    "C%3A%2FWindows%2Fwin.ini",
+    "\\\\server\\share\\asset.bin",
   ].entries()) {
     const gltf = path.join(dir, "source", `link-${i}.gltf`);
     await fs.writeFile(
