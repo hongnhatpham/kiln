@@ -113,7 +113,7 @@
       ],
       "category": "Graphics",
       "icon": "resources/kiln.png",
-      "artifactName": "Kiln-Linux-${arch}.${ext}",
+      "artifactName": "Kiln-Linux-x64.${ext}",
       "desktop": {
         "entry": {
           "Name": "Kiln",

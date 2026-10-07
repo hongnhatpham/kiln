@@ -162,7 +162,9 @@ async function smoke() {
       executablePath: executable ? path.resolve(executable) : require("electron"),
       args: [
         ...(executable ? [] : [root]),
-        ...(process.env.CI ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] : []),
+        ...(args.includes("--software-rendering")
+          ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+          : []),
       ],
       env: desktopEnv,
       timeout: 60000,
@@ -173,6 +175,20 @@ async function smoke() {
       if (message.type() === "error") process.stderr.write(`Renderer: ${message.text()}\n`);
     });
     desktop.process().stderr?.on("data", (chunk) => process.stderr.write(chunk));
+    const allowNoGraphics = args.includes("--allow-no-graphics") || args.includes("--no-webgl");
+    if (args.includes("--no-webgl")) {
+      await page
+        .getByRole("button", { name: "Open asset", exact: true })
+        .waitFor({ timeout: 30000 });
+      await page.context().addInitScript(() => {
+        const getContext = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (type, ...options) {
+          if (type.startsWith("webgl") || type === "experimental-webgl") return null;
+          return getContext.call(this, type, ...options);
+        };
+      });
+      await page.reload();
+    }
     await page.waitForFunction(() => Boolean(window.kiln), {}, { timeout: 30000 });
     await page.getByRole("button", { name: "Open asset", exact: true }).waitFor({ timeout: 30000 });
     if (args.includes("--exercise")) {
@@ -208,9 +224,28 @@ async function smoke() {
       {},
       { timeout: 180000 },
     );
-    await page
+    await page.waitForFunction(
+      () =>
+        document.body.innerText.includes("Graphics are unavailable on this computer") ||
+        Array.from(document.querySelectorAll("button")).some(
+          (b) => b.textContent?.trim() === "1:1 detail",
+        ),
+      {},
+      { timeout: 120000 },
+    );
+    const graphicsAvailable = await page
       .getByRole("button", { name: "1:1 detail", exact: true })
-      .waitFor({ state: "visible", timeout: 120000 });
+      .isVisible();
+    if (!graphicsAvailable) {
+      if (!allowNoGraphics)
+        throw new Error(
+          "3D preview unavailable. Use --allow-no-graphics only when verifying that fallback.",
+        );
+      await page.getByRole("button", { name: "Reload preview", exact: true }).click();
+      await page.getByText("Graphics are unavailable on this computer", { exact: false }).waitFor();
+      if (await page.getByRole("toolbar", { name: "Comparison", exact: true }).count())
+        throw new Error("Preview controls must be hidden without graphics.");
+    }
     await page.screenshot({ path: path.join(outputDir, "imported.png") });
     await page.getByRole("button", { name: /^Optimize/ }).click();
     await page
@@ -230,7 +265,7 @@ async function smoke() {
       { timeout: 120000 },
     );
     await page.screenshot({ path: path.join(outputDir, "optimized.png") });
-    if (args.includes("--exercise")) {
+    if (args.includes("--exercise") && graphicsAvailable) {
       const divider = page.getByRole("slider", { name: /^Comparison divider/ });
       await divider.focus();
       await page.keyboard.press("ArrowRight");
@@ -300,6 +335,7 @@ async function smoke() {
       input,
       output,
       originalUnchanged: true,
+      graphicsAvailable,
       bytes: (await fs.stat(output)).size,
       errors,
       checks: [
@@ -308,7 +344,8 @@ async function smoke() {
         "native export path and matching recipe",
         "source SHA256 unchanged",
         "desktop and smaller window captures",
-        ...(args.includes("--exercise")
+        graphicsAvailable ? "real 3D preview" : "graphics-unavailable fallback and retry",
+        ...(args.includes("--exercise") && graphicsAvailable
           ? [
               "dialog cancellation",
               "invalid-file recovery",
@@ -443,6 +480,9 @@ try {
     case "launch-check":
       await launchCheck();
       break;
+    case "release":
+      print(await (await import("./release.mjs")).release(args[0], args[1]));
+      break;
     default:
       print({
         commands: {
@@ -452,9 +492,11 @@ try {
           optimize:
             "pnpm agent optimize --input C:/path/model.usdz --preset detailed --out artifacts/exports",
           smoke:
-            "pnpm agent smoke --input C:/path/model.usdz --out artifacts/desktop-smoke [--exercise] [--executable release/win-unpacked/Kiln.exe]",
+            "pnpm agent smoke --input C:/path/model.usdz --out artifacts/desktop-smoke [--exercise] [--executable release/win-unpacked/Kiln.exe] [--software-rendering] [--no-webgl | --allow-no-graphics]",
           "launch-check":
             "pnpm agent launch-check --executable release/Kiln-Windows-x64-Portable.exe --out artifacts/portable-launch",
+          release:
+            "pnpm agent release prepare|upload|publish [windows-x64|linux-x64|macos-arm64|macos-x64] (GitHub Actions environment required)",
         },
         note: "Build first with pnpm build. Commands process files locally and never overwrite the input.",
       });

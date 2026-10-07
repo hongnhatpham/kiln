@@ -96,6 +96,8 @@ export function Stage({
   const [lighting, setLighting] = useState<Lighting>("studio");
   const [scale, setScale] = useState<number | null>(null);
   const [contextLost, setContextLost] = useState(false);
+  /** The renderer could not start, usually because WebGL is unavailable. The rest of the app still works. */
+  const [noGraphics, setNoGraphics] = useState(false);
   const [lowMemory, setLowMemory] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [coach, setCoach] = useState(false);
@@ -110,16 +112,25 @@ export function Stage({
   useEffect(() => {
     const host = canvasHost.current;
     if (!host) return;
-    const viewer = new ComparisonViewer(host, {
-      onSlot: (slot, status) => setSlots((current) => ({ ...current, [slot]: status })),
-      onScale: (value) => setScale(value === null ? null : Number(value.toPrecision(2))),
-      onContextLost: () => {
-        setContextLost(true);
-        setLowMemory(true);
-      },
-    });
-    viewerRef.current = viewer;
     setSlots({ source: { state: "empty" }, optimized: { state: "empty" } });
+    let viewer: ComparisonViewer;
+    try {
+      viewer = new ComparisonViewer(host, {
+        onSlot: (slot, status) => setSlots((current) => ({ ...current, [slot]: status })),
+        onScale: (value) => setScale(value === null ? null : Number(value.toPrecision(2))),
+        onContextLost: () => {
+          setContextLost(true);
+          setLowMemory(true);
+        },
+      });
+    } catch (cause) {
+      console.error("Kiln could not start the 3D preview.", cause);
+      host.replaceChildren();
+      setNoGraphics(true);
+      return;
+    }
+    setNoGraphics(false);
+    viewerRef.current = viewer;
     return () => {
       viewer.dispose();
       viewerRef.current = null;
@@ -274,7 +285,7 @@ export function Stage({
     >
       <div ref={canvasHost} className="stage-canvas" key={viewerKey} />
 
-      {asset && view === "split" && (
+      {asset && view === "split" && !noGraphics && (
         <>
           <div className="split-label split-label-left">
             Source <span>{sourceSpec}</span>
@@ -310,7 +321,7 @@ export function Stage({
         </div>
       )}
 
-      {asset && (
+      {asset && !noGraphics && (
         <div className="stage-toolbar stage-toolbar-top" role="toolbar" aria-label="Comparison">
           <fieldset className="segmented segmented-floating">
             <legend className="sr-only">Show</legend>
@@ -352,7 +363,7 @@ export function Stage({
         </div>
       )}
 
-      {asset && (
+      {asset && !noGraphics && (
         <div className="stage-toolbar stage-toolbar-light">
           <fieldset className="segmented segmented-floating">
             <legend className="sr-only">Lighting</legend>
@@ -496,7 +507,7 @@ export function Stage({
         </div>
       )}
 
-      {(contextLost || failedSlot) && !error && (
+      {(contextLost || failedSlot || (noGraphics && asset)) && !error && (
         <div className="overlay">
           <div className="overlay-card" role="alert">
             <AlertTriangle size={18} aria-hidden="true" className="alert-icon" />
@@ -509,7 +520,9 @@ export function Stage({
               <p className="overlay-text">
                 {contextLost
                   ? "Kiln will now show one model at a time. Closing other 3D apps also helps."
-                  : `${failedSlot === "source" ? "Source" : "Optimized"} preview: ${(slots[failedSlot!] as Extract<SlotStatus, { state: "error" }>).message}`}
+                  : noGraphics
+                    ? "Graphics are unavailable on this computer, so the 3D preview is off. You can still optimize and export."
+                    : `${failedSlot === "source" ? "Source" : "Optimized"} preview: ${(slots[failedSlot!] as Extract<SlotStatus, { state: "error" }>).message}`}
               </p>
               <div className="alert-actions">
                 <button
