@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install Kiln in the current user's applications menu.
+# Install Kiln with the Linux package manager or in ~/Applications on macOS.
 set -eu
 
 release_url=https://github.com/hongnhatpham/kiln/releases/latest/download
@@ -7,10 +7,6 @@ dry_run=false
 platform_override=
 arch_override=
 fail() { printf 'Kiln: %s\n' "$*" >&2; exit 1; }
-desktop_exec_path() {
-    # Escape the quoted Exec argument, then the desktop entry's backslash layer.
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g; s/%/%%/g; s/\\/\\\\/g'
-}
 usage() {
     printf '%s\n' 'Usage: sh install.sh [--dry-run [--platform macos|linux] [--arch x64|arm64]]'
 }
@@ -39,9 +35,9 @@ case "${arch_override:-$(uname -m)}" in
     arm64|aarch64) arch=arm64 ;;
     *) fail 'This processor architecture is not supported.' ;;
 esac
-[ -n "${HOME:-}" ] && [ "$HOME" != / ] || fail 'HOME must point to your user directory.'
 case "$platform" in
     macos)
+        [ -n "${HOME:-}" ] && [ "$HOME" != / ] || fail 'HOME must point to your user directory.'
         asset="Kiln-macOS-$arch.zip"
         install_dir="$HOME/Applications"
         target="$install_dir/Kiln.app"
@@ -49,24 +45,30 @@ case "$platform" in
         ;;
     linux)
         [ "$arch" = x64 ] || fail 'Linux releases currently support x64 only.'
-        asset=Kiln-Linux-x64.AppImage
-        install_dir="$HOME/.local/opt/kiln"
-        target="$install_dir/Kiln.AppImage"
-        marker="$install_dir/.kiln-install"
-        data_home=${XDG_DATA_HOME:-$HOME/.local/share}
-        case "$data_home" in /*) ;; *) fail 'XDG_DATA_HOME must be an absolute path.' ;; esac
-        desktop="$data_home/applications/kiln.desktop"
+        if command -v apt-get >/dev/null 2>&1; then
+            package_manager=apt-get
+            asset=Kiln-Linux-x64.deb
+        elif command -v dnf >/dev/null 2>&1; then
+            package_manager=dnf
+            asset=Kiln-Linux-x64.rpm
+        elif command -v zypper >/dev/null 2>&1; then
+            package_manager=zypper
+            asset=Kiln-Linux-x64.rpm
+        else
+            fail 'No supported package manager found. Use Debian/Ubuntu (apt-get), Fedora/RHEL (dnf), or openSUSE (zypper).'
+        fi
         ;;
 esac
-# Desktop entries cannot safely represent line breaks in paths.
-case "$target${desktop:-}" in *"
+# Preserve the macOS installation path validation.
+case "${target:-}" in *"
 "*|*"$(printf '\r')"*) fail 'Installation paths must not contain line breaks.' ;; esac
 if [ "$dry_run" = true ]; then
     printf 'Would download and verify: %s/%s\n' "$release_url" "$asset"
-    printf 'Would install: %s\n' "$target"
     if [ "$platform" = linux ]; then
-        printf 'Would create applications menu entry: %s\n' "$desktop"
-        printf 'Exec=/usr/bin/env APPIMAGE_EXTRACT_AND_RUN=1 "%s"\n' "$(desktop_exec_path "$target")"
+        printf 'Would install with: %s install <download-directory>/%s\n' "$package_manager" "$asset"
+        printf '%s\n' 'The native package manages the applications menu entry, updates, and uninstall.'
+    else
+        printf 'Would install: %s\n' "$target"
     fi
     exit 0
 fi
@@ -77,17 +79,18 @@ if [ "$platform" = macos ]; then
 else
     command -v sha256sum >/dev/null 2>&1 || fail 'Please install sha256sum and try again.'
 fi
-[ ! -L "$install_dir" ] && [ ! -L "$target" ] && [ ! -L "$marker" ] || fail 'Installation destination must not be a symbolic link.'
-if [ -e "$marker" ]; then
-    [ -f "$marker" ] && [ "$(cat "$marker")" = kiln-installer-v1 ] || fail "Unrecognized installation marker: $marker"
-fi
-if [ -e "$target" ] || { [ "$platform" = linux ] && [ -e "$install_dir" ]; }; then
-    [ -f "$marker" ] && [ "$(cat "$marker")" = kiln-installer-v1 ] || fail "An existing unmanaged installation is present: $target"
-fi
-if [ "$platform" = linux ] && [ -e "$desktop" ]; then
-    [ ! -L "$desktop" ] && grep -qx 'X-Kiln-Installer=1' "$desktop" || fail "An unrelated menu entry already exists: $desktop"
+if [ "$platform" = macos ]; then
+    [ ! -L "$install_dir" ] && [ ! -L "$target" ] && [ ! -L "$marker" ] || fail 'Installation destination must not be a symbolic link.'
+    if [ -e "$marker" ]; then
+        [ -f "$marker" ] && [ "$(cat "$marker")" = kiln-installer-v1 ] || fail "Unrecognized installation marker: $marker"
+    fi
+    if [ -e "$target" ]; then
+        [ -f "$marker" ] && [ "$(cat "$marker")" = kiln-installer-v1 ] || fail "An existing unmanaged installation is present: $target"
+    fi
 fi
 stage=$(mktemp -d "${TMPDIR:-/tmp}/kiln-install.XXXXXXXX")
+# Package managers require an absolute path to the downloaded local package.
+if [ "$platform" = linux ]; then stage=$(cd "$stage" && pwd); fi
 pending=
 backup=
 cleanup() {
@@ -108,13 +111,9 @@ verify_download() {
     [ "$actual" = "$expected" ] || fail "Release checksum verification failed: $1. Your existing installation has not been changed."
 }
 verify_download "$asset"
-if [ "$platform" = linux ]; then
-    curl --fail --location --retry 3 --output "$stage/Kiln.png" "$release_url/Kiln.png"
-    verify_download Kiln.png
-fi
 printf '%s\n' 'Release checksum verified.'
-mkdir -p "$install_dir"
 if [ "$platform" = macos ]; then
+    mkdir -p "$install_dir"
     ditto -x -k "$stage/$asset" "$stage/unpacked"
     bundle="$stage/unpacked/Kiln.app"
     [ -d "$bundle/Contents/MacOS" ] && [ -f "$bundle/Contents/Info.plist" ] && [ ! -L "$bundle" ] || fail 'The release does not contain a valid Kiln.app bundle.'
@@ -137,36 +136,11 @@ if [ "$platform" = macos ]; then
     if [ -x "$register" ]; then "$register" -f "$target" || true; fi
     printf '%s\n' 'Kiln is installed in ~/Applications. Open it from Applications or Spotlight.'
 else
-    pending=$(mktemp -d "$install_dir/.kiln-new.XXXXXXXX")
-    cp "$stage/$asset" "$pending/Kiln.AppImage"
-    chmod +x "$pending/Kiln.AppImage"
-    cp "$stage/Kiln.png" "$pending/kiln.png"
-    mkdir -p "$data_home/applications"
-    # Exec has desktop-entry escaping as well as argument quoting.
-    exec_path=$(desktop_exec_path "$target")
-    icon_path=$(printf '%s' "$install_dir/kiln.png" | sed 's/\\/\\\\/g')
-    cat > "$pending/kiln.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=Kiln
-Comment=Prepare 3D assets for the web
-Exec=/usr/bin/env APPIMAGE_EXTRACT_AND_RUN=1 "$exec_path"
-Icon=$icon_path
-Terminal=false
-Categories=Graphics;3DGraphics;
-X-Kiln-Installer=1
-EOF
-    for file in Kiln.AppImage kiln.png; do
-        [ ! -L "$install_dir/$file" ] && [ ! -d "$install_dir/$file" ] || fail "Unsafe destination: $install_dir/$file"
-    done
-    mv -f "$pending/Kiln.AppImage" "$target"
-    mv -f "$pending/kiln.png" "$install_dir/kiln.png"
-    # Move from the destination filesystem for an atomic menu-entry update.
-    menu_pending=$(mktemp "$data_home/applications/.kiln.XXXXXXXX")
-    cp "$pending/kiln.desktop" "$menu_pending"
-    chmod 644 "$menu_pending"
-    mv -f "$menu_pending" "$desktop"
-    printf '%s\n' kiln-installer-v1 > "$marker"
-    if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$data_home/applications" || true; fi
-    printf '%s\n' 'Kiln is installed. Open Kiln from your applications menu.'
+    if [ "$(id -u)" = 0 ]; then
+        "$package_manager" install "$stage/$asset"
+    else
+        command -v sudo >/dev/null 2>&1 || fail 'Please install sudo or run this installer as root.'
+        sudo "$package_manager" install "$stage/$asset"
+    fi
+    printf '%s\n' 'Kiln is installed. Open Kiln from your applications menu. Use your package manager to update or uninstall it.'
 fi

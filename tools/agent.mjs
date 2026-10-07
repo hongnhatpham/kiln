@@ -160,13 +160,21 @@ async function smoke() {
     delete desktopEnv.KILN_DEV_URL;
     desktop = await _electron.launch({
       executablePath: executable ? path.resolve(executable) : require("electron"),
-      args: [...(executable ? [] : [root])],
+      args: [
+        ...(executable ? [] : [root]),
+        ...(process.env.CI ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] : []),
+      ],
       env: desktopEnv,
       timeout: 60000,
     });
     const page = await desktop.firstWindow();
     page.on("pageerror", (error) => errors.push(String(error)));
+    page.on("console", (message) => {
+      if (message.type() === "error") process.stderr.write(`Renderer: ${message.text()}\n`);
+    });
+    desktop.process().stderr?.on("data", (chunk) => process.stderr.write(chunk));
     await page.waitForFunction(() => Boolean(window.kiln), {}, { timeout: 30000 });
+    await page.getByRole("button", { name: "Open asset", exact: true }).waitFor({ timeout: 30000 });
     if (args.includes("--exercise")) {
       await desktop.evaluate(({ dialog }) => {
         dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
