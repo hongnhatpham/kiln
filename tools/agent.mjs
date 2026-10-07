@@ -44,6 +44,52 @@ async function guard(output, input) {
   const { checkedOutput } = await import(pathToURL("dist/desktop/shared/export.js"));
   await checkedOutput(output, [input]);
 }
+async function fixture() {
+  const { Document, NodeIO } = await import("@gltf-transform/core");
+  const { BoxGeometry } = await import("three");
+  const { default: sharp } = await import("sharp");
+  const output = path.resolve(value("--out") ?? "artifacts/fixture.glb");
+  // Synthetic data is safe to use in public CI. Never substitute a research scan.
+  await fs.mkdir(path.dirname(output), { recursive: true });
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const geometry = new BoxGeometry();
+  const primitive = doc.createPrimitive();
+  for (const [attribute, semantic, type] of [
+    ["position", "POSITION", "VEC3"],
+    ["normal", "NORMAL", "VEC3"],
+    ["uv", "TEXCOORD_0", "VEC2"],
+  ]) {
+    primitive.setAttribute(
+      semantic,
+      doc
+        .createAccessor()
+        .setBuffer(buffer)
+        .setType(type)
+        .setArray(geometry.attributes[attribute].array),
+    );
+  }
+  primitive.setIndices(
+    doc.createAccessor().setBuffer(buffer).setType("SCALAR").setArray(geometry.index.array),
+  );
+  const pixels = new Uint8Array(256 * 256 * 3);
+  for (let y = 0; y < 256; y++)
+    for (let x = 0; x < 256; x++) pixels.set([x, y, 128], (y * 256 + x) * 3);
+  const png = await sharp(pixels, { raw: { width: 256, height: 256, channels: 3 } })
+    .png()
+    .toBuffer();
+  const texture = doc.createTexture("synthetic color").setMimeType("image/png").setImage(png);
+  primitive.setMaterial(
+    doc.createMaterial().setBaseColorTexture(texture).setMetallicFactor(0).setRoughnessFactor(0.8),
+  );
+  const scene = doc
+    .createScene()
+    .addChild(doc.createNode().setMesh(doc.createMesh("synthetic cube").addPrimitive(primitive)));
+  doc.getRoot().setDefaultScene(scene);
+  await fs.writeFile(output, await new NodeIO().writeBinary(doc));
+  geometry.dispose();
+  print({ output, synthetic: true });
+}
 async function optimize() {
   const input = await sourcePath();
   const preset = value("--preset") ?? "detailed";
@@ -114,7 +160,10 @@ async function smoke() {
     delete desktopEnv.KILN_DEV_URL;
     desktop = await _electron.launch({
       executablePath: executable ? path.resolve(executable) : require("electron"),
-      args: executable ? [] : [root],
+      args: [
+        ...(executable ? [] : [root]),
+        ...(process.env.CI && process.platform === "linux" ? ["--no-sandbox"] : []),
+      ],
       env: desktopEnv,
       timeout: 60000,
     });
@@ -380,6 +429,9 @@ try {
     case "optimize":
       await optimize();
       break;
+    case "fixture":
+      await fixture();
+      break;
     case "smoke":
       await smoke();
       break;
@@ -391,12 +443,13 @@ try {
         commands: {
           env: "pnpm agent env --pretty",
           status: "pnpm agent status --pretty",
+          fixture: "pnpm agent fixture --out artifacts/fixture.glb",
           optimize:
             "pnpm agent optimize --input C:/path/model.usdz --preset detailed --out artifacts/exports",
           smoke:
             "pnpm agent smoke --input C:/path/model.usdz --out artifacts/desktop-smoke [--exercise] [--executable release/win-unpacked/Kiln.exe]",
           "launch-check":
-            "pnpm agent launch-check --executable release/Kiln-0.1.0-Windows.exe --out artifacts/portable-launch",
+            "pnpm agent launch-check --executable release/Kiln-Windows-x64-Portable.exe --out artifacts/portable-launch",
         },
         note: "Build first with pnpm build. Commands process files locally and never overwrite the input.",
       });

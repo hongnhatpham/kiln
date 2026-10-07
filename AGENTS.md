@@ -2,7 +2,7 @@
 
 Kiln is a local desktop companion to vdrs-website. It prepares archival 3D masters for public web viewing. Keep originals intact and all processing on the user's machine.
 
-- Use `pnpm agent --help` for desktop smoke checks, environment inspection, and asset pipeline verification.
+- Use `pnpm agent --help` for desktop smoke checks, environment inspection, synthetic CI fixtures, and asset pipeline verification.
 - Run `pnpm check`, `pnpm lint`, `pnpm format:check`, and relevant logic tests. Exercise changes in the actual Electron app.
 - Renderer and visual work belongs to the latest Claude Opus. Engine correctness and host integration belong to Codex. Follow `DESIGN.md` once written.
 - Never commit source scans, personal asset paths, optimization outputs, or screenshots containing private data. `artifacts/`, `release/`, `.cache/`, and 3D binary files stay local.

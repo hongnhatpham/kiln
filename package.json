@@ -1,8 +1,16 @@
 {
   "name": "kiln",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Prepare archival 3D assets for the public web, locally.",
+  "author": {
+    "name": "Kiln contributors",
+    "email": "47731708+hongnhatpham@users.noreply.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hongnhatpham/kiln.git"
+  },
   "type": "module",
   "main": "dist/desktop/electron/main.js",
   "scripts": {
@@ -15,7 +23,7 @@
     "format:check": "vp fmt --check",
     "test": "tsx --test tests/*.test.ts",
     "start": "electron .",
-    "package": "pnpm build && electron-builder --win portable",
+    "package": "pnpm build && electron-builder --publish never",
     "agent": "node tools/agent.mjs"
   },
   "dependencies": {
@@ -44,6 +52,7 @@
     "typescript": "5.9.3",
     "vite-plus": "1.1.0"
   },
+  "packageManager": "pnpm@12.6.0",
   "build": {
     "appId": "com.vdrs.kiln",
     "productName": "Kiln",
@@ -68,11 +77,49 @@
     ],
     "win": {
       "target": [
+        "nsis",
         "portable"
       ],
       "signExecutable": false,
       "icon": "resources/kiln.ico"
     },
-    "artifactName": "Kiln-${version}-Windows.${ext}"
+    "nsis": {
+      "artifactName": "Kiln-Windows-${arch}-Setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Kiln",
+      "runAfterFinish": false
+    },
+    "portable": {
+      "artifactName": "Kiln-Windows-${arch}-Portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.graphics-design",
+      "icon": "resources/kiln.png",
+      "identity": null,
+      "artifactName": "Kiln-macOS-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Graphics",
+      "icon": "resources/kiln.png",
+      "artifactName": "Kiln-Linux-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Name": "Kiln",
+          "Comment": "Prepare archival 3D assets for the public web"
+        }
+      }
+    }
   }
 }
