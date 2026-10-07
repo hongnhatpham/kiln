@@ -14,8 +14,7 @@
   "type": "module",
   "main": "dist/desktop/electron/main.js",
   "scripts": {
-    "postinstall": "install-electron",
-    "dev": "node tools/dev.mjs",
+    "dev": "install-electron && node tools/dev.mjs",
     "dev:ui": "vp dev --host 127.0.0.1",
     "build": "tsc -p tsconfig.desktop.json && vp build",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.desktop.json",
@@ -24,7 +23,7 @@
     "format:check": "vp fmt --check",
     "test": "tsx --test tests/*.test.ts",
     "start": "electron .",
-    "package": "pnpm build && electron-builder --publish never",
+    "package": "pnpm build && install-electron && electron-builder --publish never",
     "agent": "node tools/agent.mjs"
   },
   "dependencies": {
