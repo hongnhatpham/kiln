@@ -84,8 +84,8 @@ jobs:
           cp release/Kiln-Linux-x64.deb artifacts/local-release/
           (cd artifacts/local-release && sha256sum *.deb > SHA256SUMS.txt)
           sed "s|^release_url=.*|release_url=file://$GITHUB_WORKSPACE/artifacts/local-release|" install.sh > artifacts/install-local.sh
-          sh artifacts/install-local.sh
-          sh artifacts/install-local.sh
+          printf 'y\n' | sh artifacts/install-local.sh
+          printf 'y\n' | sh artifacts/install-local.sh
           test -f /usr/share/applications/kiln.desktop
           ! grep -q -- '--no-sandbox' /usr/share/applications/kiln.desktop
       - name: Exercise installed Linux app
