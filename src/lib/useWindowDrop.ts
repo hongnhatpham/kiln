@@ -3,13 +3,15 @@ import { useEffect, useState } from "react";
 /**
  * Files and folders can be dropped anywhere in the window. Returns whether something is being
  * dragged over it. Always prevents the default drop, which would navigate the window to the file.
+ * Pass null when an enclosing view already handles drops.
  */
 export function useWindowDrop(
   busy: boolean,
-  onDrop: (file: File, isFolder: boolean) => void,
+  onDrop: ((file: File, isFolder: boolean) => void) | null,
 ): boolean {
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
+    if (!onDrop) return;
     let depth = 0;
     const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
     const enter = (event: DragEvent) => {

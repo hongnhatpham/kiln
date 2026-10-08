@@ -44,6 +44,11 @@ const BOTH_MODELS_BUDGET = 1.5 * 1024 ** 3;
 const FALLBACK_FORMATS = ["usdz", "glb", "gltf", "obj", "fbx", "ply", "stl"];
 
 interface StageProps {
+  /**
+   * One model out of a processed folder. The folder view handles drops, there is no export step to
+   * coach towards, and the chosen view carries over as the user steps from model to model.
+   */
+  folder?: boolean;
   asset: AssetInfo | null;
   result: OptimizationResult | null;
   busy: Busy | null;
@@ -85,6 +90,7 @@ function isTyping(target: EventTarget | null) {
 }
 
 export function Stage({
+  folder = false,
   asset,
   result,
   busy,
@@ -115,6 +121,7 @@ export function Stage({
   const [noGraphics, setNoGraphics] = useState(false);
   const [lowMemory, setLowMemory] = useState(false);
   const [coach, setCoach] = useState(false);
+  const comparedBefore = useRef(false);
 
   const fitsBoth =
     !lowMemory && (!asset || !result || asset.gpuBytes + result.gpuBytes <= BOTH_MODELS_BUDGET);
@@ -177,9 +184,11 @@ export function Stage({
   // A fresh result opens the comparison.
   useEffect(() => {
     if (!result) return setMode("source");
+    if (folder && comparedBefore.current) return;
+    comparedBefore.current = true;
     setMode(fitsBoth ? "split" : "optimized");
     setSplit(0.5);
-    setCoach(true);
+    setCoach(!folder);
     // Chosen once per result: later memory changes should not flip the user's view.
   }, [result?.id]);
 
@@ -210,7 +219,7 @@ export function Stage({
     return () => window.removeEventListener("keydown", onKey);
   }, [asset, result, fitsBoth]);
 
-  const dragging = useWindowDrop(!!busy, onDrop);
+  const dragging = useWindowDrop(!!busy, folder ? null : onDrop);
 
   const moveDivider = useCallback((clientX: number) => {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -266,6 +275,7 @@ export function Stage({
     <div
       ref={stageRef}
       className="stage"
+      data-folder={folder || undefined}
       data-empty={!asset || undefined}
       data-dragging={dragging || undefined}
       onPointerDown={() => setCoach(false)}

@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "elect
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { EngineClient } from "./worker-client.js";
 import { normalizeOptions } from "../engine/options.js";
@@ -15,6 +16,7 @@ import {
 import { exportFiles } from "../shared/export.js";
 import type {
   AssetInfo,
+  BatchItem,
   BatchPlan,
   BatchUpdate,
   EnvironmentInfo,
@@ -84,9 +86,24 @@ async function exclusive<T>(operation: () => Promise<T>) {
     busy = false;
   }
 }
+/** Close a finished model's preview: its source leaves the engine and its files stop being served. */
+async function dropPreview(item: BatchItem) {
+  const preview = item.preview;
+  if (!preview) return;
+  delete item.preview;
+  previewFiles.delete(preview.asset.id);
+  previewFiles.delete(preview.result.id);
+  await engine.call("releaseAsset", [preview.asset.id]).catch((error) => console.error(error));
+}
+/** Previews last until another file or folder is opened, so converted sources do not pile up. */
+async function dropBatchPreviews() {
+  if (runningBatch) return;
+  for (const plan of batches.values()) for (const item of plan.items) await dropPreview(item);
+}
 async function importAsset(input: string): Promise<AssetInfo> {
   if (!path.isAbsolute(input)) throw new Error("Choose a local asset file.");
   return exclusive(async () => {
+    await dropBatchPreviews();
     const record = await engine.call<AssetRecord>("importAsset", [input, randomUUID()]);
     assets.set(record.info.id, record);
     previewFiles.set(record.info.id, record.previewPath);
@@ -99,6 +116,7 @@ async function planBatch(input: unknown): Promise<BatchPlan> {
     throw new Error("Choose a local folder of models.");
   const sourceDir = path.resolve(input),
     outputDir = defaultBatchOutput(sourceDir);
+  await dropBatchPreviews();
   const plan: BatchPlan = {
     id: randomUUID(),
     sourceDir,
@@ -123,6 +141,7 @@ async function runBatch(plan: BatchPlan, input: unknown): Promise<BatchPlan> {
     runningBatch = plan.id;
     batchCancelled = false;
     const outputs = batchOutputs(plan.items, plan.outputDir);
+    // Earlier previews stay viewable until their model is processed again.
     for (let index = 0; index < plan.items.length; index++) {
       const item = plan.items[index];
       item.status = "waiting";
@@ -138,7 +157,8 @@ async function runBatch(plan: BatchPlan, input: unknown): Promise<BatchPlan> {
         const item = plan.items[index];
         const operationId = randomUUID();
         let source: AssetRecord | undefined;
-        const update = (changes: Partial<typeof item>) => {
+        const update = async (changes: Partial<typeof item>, keepPreview = false) => {
+          if (!keepPreview) await dropPreview(item);
           delete item.message;
           delete item.modelPath;
           delete item.outputBytes;
@@ -154,7 +174,7 @@ async function runBatch(plan: BatchPlan, input: unknown): Promise<BatchPlan> {
           const supported = (await environment()).supportedFormats;
           if (batchCancelled) break;
           if (!supported.includes(path.extname(inputPath).slice(1).toLowerCase())) {
-            update({ status: "skipped", message: "Needs Blender" });
+            await update({ status: "skipped", message: "Needs Blender" });
             continue;
           }
           if (
@@ -168,10 +188,14 @@ async function runBatch(plan: BatchPlan, input: unknown): Promise<BatchPlan> {
           ) {
             revealable.add(normalize(modelPath));
             revealable.add(normalize(plan.outputDir));
-            update({ status: "skipped", message: "Already up to date" });
+            // A preview made with these same settings still shows this output.
+            await update(
+              { status: "skipped", message: "Already up to date" },
+              !!item.preview && isDeepStrictEqual(item.preview.result.options, options),
+            );
             continue;
           }
-          update({ status: "processing" });
+          await update({ status: "processing" });
           progressSpan = [0, 25];
           source = await engine.call<AssetRecord>("importAsset", [inputPath, operationId]);
           progressSpan = [25, 100];
@@ -206,16 +230,23 @@ async function runBatch(plan: BatchPlan, input: unknown): Promise<BatchPlan> {
           revealable.add(normalize(modelPath));
           revealable.add(normalize(recipePath));
           revealable.add(normalize(plan.outputDir));
-          update({
+          // Compare against the exported file itself, so the preview is exactly what was saved.
+          previewFiles.set(source.info.id, source.previewPath);
+          previewFiles.set(result.info.id, modelPath);
+          await update({
             status: "done",
             modelPath,
             outputBytes: result.info.bytes,
             warnings: result.info.warnings.length,
+            preview: {
+              asset: { ...source.info, previewUrl: previewUrl(source.info.id) },
+              result: { ...result.info, previewUrl: previewUrl(result.info.id) },
+            },
           });
         } catch (error) {
           const cancelled =
             batchCancelled || (error instanceof Error && error.name === "AbortError");
-          update({
+          await update({
             status: cancelled ? "cancelled" : "failed",
             message: cancelled
               ? "Cancelled."
@@ -227,7 +258,8 @@ async function runBatch(plan: BatchPlan, input: unknown): Promise<BatchPlan> {
         } finally {
           if (source) {
             try {
-              await engine.call("releaseAsset", [source.info.id]);
+              // A finished model keeps its source open for the preview. Its web copy is on disk.
+              await engine.call("releaseAsset", [source.info.id, item.status === "done"]);
             } catch (error) {
               // Cleanup must not erase a committed export or change cancellation into failure.
               const message =
@@ -282,6 +314,7 @@ function registerIPC() {
     );
     if (runningBatch === plan.id)
       throw new Error("Wait for folder processing to finish before changing its output.");
+    for (const item of plan.items) await dropPreview(item);
     plan.outputDir = outputDir;
     plan.items = items;
     return plan;

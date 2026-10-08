@@ -62,7 +62,8 @@ Click **Open folder**, or drop a folder into the Kiln window. Kiln finds every m
 - The web copies and their recipes go into a new folder beside the one you chose, named with `_public` at the end, for example `Scans_public`. Subfolders are kept, so every file is easy to find. Click **Change** to save somewhere else.
 - Run it again whenever you add new scans. Models that are already up to date are skipped, so only new or changed ones are processed. If you change the quality, every model is processed again.
 - If one model fails, Kiln notes why and carries on with the rest. Click **Stop** at any time; running it again continues where it stopped.
-- Folder processing does not show the side-by-side comparison. Open a few results on their own to check the detail before you publish.
+- Click any finished model to compare it with its original on the stage, even while the rest are still processing. Use the arrows below the model, or the Left and Right keys, to step through every finished model with the same view, surface and lighting. Press Esc to close the preview. Previews last until you open another file or folder.
+- Drag the line between the preview and the list to share the room, or double-click it to reset. Hide either one with its button, or by dragging the line all the way. The folded panel keeps a slim bar: the list's bar shows which model is being processed, and the preview's bar keeps the arrows so you can still step through models.
 
 ### What you get
 

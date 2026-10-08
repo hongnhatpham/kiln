@@ -69,8 +69,8 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
   });
   const gpu = (size: number) => Math.round((size * size * 16) / 3);
 
-  const asset = (name: string, previewUrl: string): AssetInfo => ({
-    id: "mock-source",
+  const asset = (name: string, previewUrl: string, id = "mock-source"): AssetInfo => ({
+    id,
     name,
     sourcePath: `/scans/${name}`,
     sourceBytes: 139_307_972,
@@ -114,6 +114,50 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
 
   const size = (limit: number) => (limit === 0 ? 8192 : Math.min(8192, limit));
 
+  const result = (sourceId: string, options: OptimizationOptions): OptimizationResult => {
+    const textures = [
+      tex(
+        "color",
+        "color",
+        size(options.colorSize),
+        options.losslessTextures ? 34_010_802 : 2_854_094,
+        "image/webp",
+      ),
+      tex(
+        "normal",
+        "normal",
+        size(options.normalSize),
+        options.normalLossless ? 9_429_478 : 4_100_000,
+        "image/webp",
+      ),
+      tex(
+        "ao",
+        "ao",
+        size(options.aoSize),
+        options.losslessTextures ? 19_484_810 : 1_234_038,
+        "image/webp",
+      ),
+    ];
+    return {
+      id: `mock-result-${Date.now()}`,
+      sourceId,
+      name: "model_public.glb",
+      previewUrl: optimizedUrl,
+      bytes: textures.reduce((sum, t) => sum + t.bytes, 1_452_000),
+      triangles: Math.round(99_999 * options.simplifyRatio),
+      vertices: Math.round(56_684 * options.simplifyRatio),
+      textures,
+      gpuBytes: textures.reduce((sum, t) => sum + gpu(t.width), 2_400_000),
+      elapsedMs: 41_800,
+      options,
+      warnings: [
+        "Needs a viewer with meshopt support. In three.js, call GLTFLoader.setMeshoptDecoder(MeshoptDecoder).",
+      ],
+      validationErrors: 0,
+      requiredExtensions: ["EXT_meshopt_compression", "EXT_texture_webp"],
+    };
+  };
+
   return {
     async environment() {
       return {
@@ -146,47 +190,7 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
         throw new Error(
           "Error invoking remote method 'kiln:optimize': Error: Texture encoder ran out of memory.",
         );
-      const textures = [
-        tex(
-          "color",
-          "color",
-          size(options.colorSize),
-          options.losslessTextures ? 34_010_802 : 2_854_094,
-          "image/webp",
-        ),
-        tex(
-          "normal",
-          "normal",
-          size(options.normalSize),
-          options.normalLossless ? 9_429_478 : 4_100_000,
-          "image/webp",
-        ),
-        tex(
-          "ao",
-          "ao",
-          size(options.aoSize),
-          options.losslessTextures ? 19_484_810 : 1_234_038,
-          "image/webp",
-        ),
-      ];
-      return {
-        id: `mock-result-${Date.now()}`,
-        sourceId,
-        name: "model_public.glb",
-        previewUrl: optimizedUrl,
-        bytes: textures.reduce((sum, t) => sum + t.bytes, 1_452_000),
-        triangles: Math.round(99_999 * options.simplifyRatio),
-        vertices: Math.round(56_684 * options.simplifyRatio),
-        textures,
-        gpuBytes: textures.reduce((sum, t) => sum + gpu(t.width), 2_400_000),
-        elapsedMs: 41_800,
-        options,
-        warnings: [
-          "Needs a viewer with meshopt support. In three.js, call GLTFLoader.setMeshoptDecoder(MeshoptDecoder).",
-        ],
-        validationErrors: 0,
-        requiredExtensions: ["EXT_meshopt_compression", "EXT_texture_webp"],
-      };
+      return result(sourceId, options);
     },
     async chooseBatchFolder() {
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -203,7 +207,7 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
       plan.outputDir = "/exports/web-ready";
       return structuredClone(plan);
     },
-    async runBatch(batchId) {
+    async runBatch(batchId, options) {
       if (!plan || plan.id !== batchId) throw new Error("Choose the folder again.");
       const emit = (index: number, item: BatchItem, operationId?: string) => {
         plan!.items[index] = item;
@@ -219,7 +223,12 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
           continue;
         }
         if (item.status === "done") {
-          emit(index, { ...base, status: "skipped", message: "Already up to date" });
+          emit(index, {
+            ...base,
+            status: "skipped",
+            message: "Already up to date",
+            preview: item.preview,
+          });
           continue;
         }
         const operationId = `batch-${index}`;
@@ -243,6 +252,16 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
             outputBytes: Math.round(item.sourceBytes * 0.18),
             modelPath: `${plan.outputDir}/${item.relativePath.replace(/\.[^.]+$/, "_public.glb")}`,
             warnings: 0,
+            ...(sourceUrl && {
+              preview: {
+                asset: asset(
+                  item.relativePath.split("/").pop()!,
+                  sourceUrl,
+                  `mock-source-${index}`,
+                ),
+                result: { ...result(`mock-source-${index}`, options), id: `mock-result-${index}` },
+              },
+            }),
           });
       }
       cancelled = false;
