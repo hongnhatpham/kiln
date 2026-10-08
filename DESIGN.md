@@ -106,6 +106,7 @@ All fonts are bundled from `src/assets/fonts` under the SIL Open Font License. N
 - **Split divider**: 1 px white line with a 28 px round handle. Draggable, and a keyboard slider (arrows, Shift for larger steps, Home, End).
 - **Overlay and error cards**: surface, 10 px radius, card shadow, short rise-in. Errors name the problem and offer the remedy as buttons (Locate Blender, Choose another file, Try again).
 - **Progress**: 4 px bar. Determinate when the engine reports a percent. When unknown, a still partial bar, never a looping shimmer.
+- **Folder list**: when a folder is open it replaces the stage and record. A surface header names the folder and where results are saved, then a ledger-style list with a sticky column header shows each model's path (folders in tertiary ink), source size, web copy size and change, and its status icon: hollow circle waiting, blue dot processing with an inline 4 px bar, blue check done, gray check up to date, ochre triangle needs Blender, brick alert failed with the reason underneath. The panel footer becomes "Process N models" and shows "Model 3 of 27" while running.
 - **Ledger**: borderless table with hairline rows. Source in secondary ink, optimized in bold ink, change in blue (smaller) or ochre (larger).
 - **Focus**: 2 px surface gap plus 2 px blue ring on every interactive element.
 

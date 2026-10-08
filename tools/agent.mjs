@@ -477,6 +477,9 @@ try {
     case "smoke":
       await smoke();
       break;
+    case "batch-smoke":
+      await batchSmoke();
+      break;
     case "launch-check":
       await launchCheck();
       break;
@@ -491,6 +494,8 @@ try {
           fixture: "pnpm agent fixture --out artifacts/fixture.glb",
           optimize:
             "pnpm agent optimize --input C:/path/model.usdz --preset detailed --out artifacts/exports",
+          "batch-smoke":
+            "pnpm agent batch-smoke --folder artifacts/batch-input --out artifacts/batch-output",
           smoke:
             "pnpm agent smoke --input C:/path/model.usdz --out artifacts/desktop-smoke [--exercise] [--executable release/win-unpacked/Kiln.exe] [--software-rendering] [--no-webgl | --allow-no-graphics]",
           "launch-check":
@@ -504,4 +509,162 @@ try {
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
+}
+async function batchSmoke() {
+  const folder = path.resolve(value("--folder") ?? "artifacts/batch-smoke-input");
+  const out = path.resolve(value("--out") ?? "artifacts/batch-smoke-output");
+  const artifacts = path.join(root, "artifacts");
+  for (const dir of [folder, out]) {
+    const relative = path.relative(artifacts, dir);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
+      throw new Error(
+        "Batch smoke writes only new folders below artifacts. Choose unused --folder and --out paths.",
+      );
+    if (await exists(dir))
+      throw new Error("Batch smoke requires unused folders to protect existing data.");
+  }
+  if (folder === out) throw new Error("Choose separate synthetic source and output folders.");
+  await fs.mkdir(path.join(folder, "nested"), { recursive: true });
+  const { spawn } = await import("node:child_process");
+  const makeFixture = (file) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        [path.join(root, "tools/agent.mjs"), "fixture", "--out", file],
+        { stdio: "inherit" },
+      );
+      child.once("exit", (code) =>
+        code === 0 ? resolve() : reject(new Error(`fixture failed (${code})`)),
+      );
+      child.once("error", reject);
+    });
+  await makeFixture(path.join(folder, "root.glb"));
+  await makeFixture(path.join(folder, "nested", "child.glb"));
+  const before = new Map();
+  for (const file of [path.join(folder, "root.glb"), path.join(folder, "nested", "child.glb")])
+    before.set(
+      file,
+      crypto
+        .createHash("sha256")
+        .update(await fs.readFile(file))
+        .digest("hex"),
+    );
+  const { _electron } = await import("playwright");
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const desktop = await _electron.launch({
+    executablePath: require("electron"),
+    args: [root],
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => key !== "ELECTRON_RUN_AS_NODE" && key !== "KILN_DEV_URL",
+      ),
+    ),
+    timeout: 60000,
+  });
+  try {
+    const page = await desktop.firstWindow();
+    await page.waitForFunction(() => Boolean(window.kiln), {}, { timeout: 30000 });
+    const { PRESETS } = await import(pathToURL("dist/desktop/shared/presets.js"));
+    await desktop.evaluate(({ dialog }, output) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [output] });
+    }, out);
+    const first = await page.evaluate(
+      async ({ folder, options }) => {
+        const plan = await window.kiln.planBatch(folder);
+        const output = await window.kiln.chooseBatchOutput(plan.id);
+        return window.kiln.runBatch(output.id, options);
+      },
+      { folder, options: PRESETS.detailed },
+    );
+    const firstStatuses = first.items.map((item) => item.status);
+    const second = await page.evaluate(
+      async ({ id, options }) => window.kiln.runBatch(id, options),
+      { id: first.id, options: PRESETS.detailed },
+    );
+    if (
+      !second.items.every(
+        (item) => item.status === "skipped" && item.message === "Already up to date",
+      )
+    )
+      throw new Error("Batch rerun did not skip every item.");
+    if (first.items.length !== 2 || !firstStatuses.every((status) => status === "done"))
+      throw new Error("Batch did not process both synthetic models.");
+    const outputs = first.items.map((item) => item.modelPath);
+    for (const file of outputs) {
+      if (!(await exists(file)) || !(await exists(file.replace(/\.glb$/i, ".recipe.json"))))
+        throw new Error("Batch output or recipe is missing.");
+    }
+    const changed = await page.evaluate(
+      async ({ id, options }) => window.kiln.runBatch(id, options),
+      { id: first.id, options: PRESETS.lossless },
+    );
+    if (!changed.items.every((item) => item.status === "done"))
+      throw new Error("Changed settings did not reprocess all items.");
+    const cancellation = await page.evaluate(
+      async ({ id, options }) => {
+        const updates = [];
+        const unsubscribe = window.kiln.onBatch((update) => {
+          updates.push(update);
+          if (update.item.status === "processing") void window.kiln.cancel();
+        });
+        try {
+          return { plan: await window.kiln.runBatch(id, options), updates };
+        } finally {
+          unsubscribe();
+        }
+      },
+      { id: first.id, options: PRESETS.lightweight },
+    );
+    if (
+      cancellation.plan.items[0].status !== "cancelled" ||
+      cancellation.plan.items[1].status !== "waiting"
+    )
+      throw new Error("Cancellation did not stop the current item and leave later items waiting.");
+    if (
+      !cancellation.updates.some(
+        (update) => update.operationId && update.item.status === "processing",
+      )
+    )
+      throw new Error("Batch processing updates have no operation ID.");
+    const resumed = await page.evaluate(
+      async ({ id, options }) => window.kiln.runBatch(id, options),
+      { id: first.id, options: PRESETS.lightweight },
+    );
+    if (!resumed.items.every((item) => item.status === "done"))
+      throw new Error("Cancelled batch could not resume.");
+    await fs.writeFile(path.join(folder, "a-invalid.glb"), "invalid GLB");
+    await fs.copyFile(path.join(folder, "root.glb"), path.join(folder, "z-new.glb"));
+    const recovery = await page.evaluate(
+      async ({ folder, options }) => {
+        const plan = await window.kiln.planBatch(folder);
+        const output = await window.kiln.chooseBatchOutput(plan.id);
+        return window.kiln.runBatch(output.id, options);
+      },
+      { folder, options: PRESETS.lightweight },
+    );
+    if (recovery.items[0].status !== "failed" || recovery.items.at(-1).status !== "done")
+      throw new Error("A failed model prevented later models from processing.");
+    for (const [file, hash] of before) {
+      const after = crypto
+        .createHash("sha256")
+        .update(await fs.readFile(file))
+        .digest("hex");
+      if (after !== hash) throw new Error("Batch changed an original.");
+    }
+    print({
+      folder,
+      output: second.outputDir,
+      firstStatuses,
+      rerunStatuses: second.items.map((item) => item.status),
+      outputs,
+      originalsUnchanged: true,
+      changedSettingsReprocessed: true,
+      cancellationStatuses: cancellation.plan.items.map((item) => item.status),
+      resumedStatuses: resumed.items.map((item) => item.status),
+      failureRecoveryStatuses: recovery.items.map((item) => item.status),
+    });
+  } finally {
+    await desktop.close();
+  }
 }

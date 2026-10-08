@@ -1,28 +1,45 @@
-import { FolderOpen, Link2 } from "lucide-react";
+import { FolderOpen, FolderTree, Link2 } from "lucide-react";
 import type { AssetInfo, EnvironmentInfo } from "../../shared/contracts.ts";
 import { KilnMark } from "./KilnMark.tsx";
 
 interface HeaderProps {
   asset: AssetInfo | null;
+  /** The folder being processed, when one is open. */
+  folder: string | null;
   environment: EnvironmentInfo | null;
   busy: boolean;
   mock: boolean;
   onChoose(): void;
+  onChooseFolder(): void;
   onLocateBlender(): void;
 }
 
-export function Header({ asset, environment, busy, mock, onChoose, onLocateBlender }: HeaderProps) {
+export function Header({
+  asset,
+  folder,
+  environment,
+  busy,
+  mock,
+  onChoose,
+  onChooseFolder,
+  onLocateBlender,
+}: HeaderProps) {
   const blender = environment?.blenderPath;
+  const open = folder
+    ? { name: folder.split(/[/\\]/).filter(Boolean).pop() ?? folder, path: folder }
+    : asset
+      ? { name: asset.name, path: asset.sourcePath }
+      : null;
   return (
     <header className="header">
       <div className="brand">
         <KilnMark />
         <span className="brand-name">Kiln</span>
       </div>
-      {asset && (
-        <div className="header-asset" title={asset.sourcePath}>
+      {open && (
+        <div className="header-asset" title={open.path}>
           <span className="header-divider" aria-hidden="true" />
-          <span className="header-asset-name">{asset.name}</span>
+          <span className="header-asset-name">{open.name}</span>
         </div>
       )}
       <div className="header-actions">
@@ -51,6 +68,16 @@ export function Header({ asset, environment, busy, mock, onChoose, onLocateBlend
             {blender ? "Blender linked" : "Locate Blender"}
           </button>
         )}
+        <button
+          type="button"
+          className="button button-quiet"
+          onClick={onChooseFolder}
+          disabled={busy}
+          title="Process every model in a folder and its subfolders (Ctrl+Shift+O)"
+        >
+          <FolderTree size={15} aria-hidden="true" />
+          Open folder
+        </button>
         <button
           type="button"
           className="button button-quiet"

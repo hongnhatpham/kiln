@@ -1,5 +1,8 @@
 import type {
   AssetInfo,
+  BatchItem,
+  BatchPlan,
+  BatchUpdate,
   KilnAPI,
   OptimizationOptions,
   OptimizationResult,
@@ -12,7 +15,7 @@ import type {
  * files served from a local folder you pass in the URL, for example
  *   ?assets=http://127.0.0.1:8098/&source=reference/model.glb&optimized=model_public.glb
  * Stats are fixed sample numbers for a single-mesh scan with three 8K maps. Nothing is optimized here.
- * `&fail=import|optimize|export` rehearses errors. Never bundled: `loadApi` imports it only in dev without a preload.
+ * `&fail=import|optimize|export` rehearses errors. Folder processing uses a fixed sample folder. Never bundled: `loadApi` imports it only in dev without a preload.
  */
 export function createMockKiln(params: URLSearchParams): KilnAPI {
   const base = params.get("assets") ?? "";
@@ -24,6 +27,31 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
   const listeners = new Set<(progress: ProgressUpdate) => void>();
   let cancelled = false;
   const files = new Map<string, File>();
+  const batchListeners = new Set<(update: BatchUpdate) => void>();
+  // A sample archive: nested sites, one format that needs Blender, one file that will fail.
+  const SAMPLE: [string, number][] = [
+    ["amphora-03.glb", 212_400_118],
+    ["site-a/bowl_fragment_0042.glb", 139_307_972],
+    ["site-a/bowl_fragment_0043.glb", 141_220_503],
+    ["site-a/figurine-ochre.fbx", 88_102_444],
+    ["site-a/trench-2/coin_hoard_ARCH_0117.glb", 64_998_201],
+    ["site-a/trench-2/lamp-oil.gltf", 31_874_009],
+    ["site-b/relief-panel-north.glb", 402_118_660],
+    ["site-b/relief-panel-south.glb", 398_004_215],
+    ["site-b/stela_fragment.obj", 57_220_816],
+    ["site-b/votive-head.glb", 120_441_097],
+  ];
+  let plan: BatchPlan | null = null;
+  const planFor = (sourceDir: string): BatchPlan => ({
+    id: `mock-batch-${Date.now()}`,
+    sourceDir,
+    outputDir: `${sourceDir}_public`,
+    items: SAMPLE.map(([relativePath, sourceBytes]) =>
+      /\.(fbx|obj)$/.test(relativePath)
+        ? { relativePath, sourceBytes, status: "skipped", message: "Needs Blender" }
+        : { relativePath, sourceBytes, status: "waiting" },
+    ),
+  });
 
   const tex = (
     name: string,
@@ -159,6 +187,70 @@ export function createMockKiln(params: URLSearchParams): KilnAPI {
         validationErrors: 0,
         requiredExtensions: ["EXT_meshopt_compression", "EXT_texture_webp"],
       };
+    },
+    async chooseBatchFolder() {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      plan = planFor(params.get("folder") ?? "/archive/excavation-2024");
+      return structuredClone(plan);
+    },
+    async planBatch(folderPath) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      plan = planFor(folderPath.replace(/^mock-file:/, "/archive/"));
+      return structuredClone(plan);
+    },
+    async chooseBatchOutput() {
+      if (!plan) return null;
+      plan.outputDir = "/exports/web-ready";
+      return structuredClone(plan);
+    },
+    async runBatch(batchId) {
+      if (!plan || plan.id !== batchId) throw new Error("Choose the folder again.");
+      const emit = (index: number, item: BatchItem, operationId?: string) => {
+        plan!.items[index] = item;
+        batchListeners.forEach((listener) =>
+          listener({ batchId, index, item: { ...item }, operationId }),
+        );
+      };
+      for (const [index, item] of plan.items.entries()) {
+        const base = { relativePath: item.relativePath, sourceBytes: item.sourceBytes };
+        if (cancelled) break;
+        if (/\.(fbx|obj)$/.test(item.relativePath)) {
+          emit(index, { ...base, status: "skipped", message: "Needs Blender" });
+          continue;
+        }
+        if (item.status === "done") {
+          emit(index, { ...base, status: "skipped", message: "Already up to date" });
+          continue;
+        }
+        const operationId = `batch-${index}`;
+        emit(index, { ...base, status: "processing" }, operationId);
+        try {
+          await run(operationId, ["importing", "textures", "geometry", "validating"], 1600);
+        } catch {
+          emit(index, { ...base, status: "cancelled" });
+          break;
+        }
+        if (item.relativePath.includes("lamp-oil"))
+          emit(index, {
+            ...base,
+            status: "failed",
+            message: "A texture referenced by this glTF file is missing: lamp-oil_color.png.",
+          });
+        else
+          emit(index, {
+            ...base,
+            status: "done",
+            outputBytes: Math.round(item.sourceBytes * 0.18),
+            modelPath: `${plan.outputDir}/${item.relativePath.replace(/\.[^.]+$/, "_public.glb")}`,
+            warnings: 0,
+          });
+      }
+      cancelled = false;
+      return structuredClone(plan);
+    },
+    onBatch(callback) {
+      batchListeners.add(callback);
+      return () => batchListeners.delete(callback);
     },
     async cancel() {
       cancelled = true;

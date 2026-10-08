@@ -32,6 +32,7 @@ import {
   type SlotStatus,
   type ViewMode,
 } from "../viewer/ComparisonViewer.ts";
+import { useWindowDrop } from "../lib/useWindowDrop.ts";
 import { ProgressBar } from "./ProgressBar.tsx";
 
 /** Above this combined estimate, compare one model at a time instead of holding both in memory. */
@@ -45,14 +46,16 @@ interface StageProps {
   progress: ProgressUpdate | null;
   error: AppError | null;
   environment: EnvironmentInfo | null;
-  onDropFile(file: File): void;
+  onDrop(file: File, isFolder: boolean): void;
   onChoose(): void;
+  onChooseFolder(): void;
   onCancel(): void;
   onAction(action: AppAction): void;
 }
 
 const ACTION_LABEL: Record<AppAction, string> = {
   choose: "Choose another file",
+  "choose-folder": "Choose another folder",
   blender: "Locate Blender",
   "retry-optimize": "Try again",
   dismiss: "Dismiss",
@@ -78,8 +81,9 @@ export function Stage({
   progress,
   error,
   environment,
-  onDropFile,
+  onDrop,
   onChoose,
+  onChooseFolder,
   onCancel,
   onAction,
 }: StageProps) {
@@ -99,7 +103,6 @@ export function Stage({
   /** The renderer could not start, usually because WebGL is unavailable. The rest of the app still works. */
   const [noGraphics, setNoGraphics] = useState(false);
   const [lowMemory, setLowMemory] = useState(false);
-  const [dragging, setDragging] = useState(false);
   const [coach, setCoach] = useState(false);
 
   const fitsBoth =
@@ -193,44 +196,7 @@ export function Stage({
     return () => window.removeEventListener("keydown", onKey);
   }, [asset, result, fitsBoth]);
 
-  // Files can be dropped anywhere in the window.
-  useEffect(() => {
-    let depth = 0;
-    const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
-    const enter = (event: DragEvent) => {
-      if (!hasFiles(event)) return;
-      event.preventDefault();
-      depth += 1;
-      if (!busy) setDragging(true);
-    };
-    const over = (event: DragEvent) => {
-      if (!hasFiles(event)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
-    };
-    const leave = () => {
-      depth = Math.max(0, depth - 1);
-      if (!depth) setDragging(false);
-    };
-    const drop = (event: DragEvent) => {
-      if (!hasFiles(event)) return;
-      event.preventDefault();
-      depth = 0;
-      setDragging(false);
-      const file = event.dataTransfer?.files[0];
-      if (file && !busy) onDropFile(file);
-    };
-    window.addEventListener("dragenter", enter);
-    window.addEventListener("dragover", over);
-    window.addEventListener("dragleave", leave);
-    window.addEventListener("drop", drop);
-    return () => {
-      window.removeEventListener("dragenter", enter);
-      window.removeEventListener("dragover", over);
-      window.removeEventListener("dragleave", leave);
-      window.removeEventListener("drop", drop);
-    };
-  }, [busy, onDropFile]);
+  const dragging = useWindowDrop(!!busy, onDrop);
 
   const moveDivider = useCallback((clientX: number) => {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -267,7 +233,7 @@ export function Stage({
   const failedSlot = (["source", "optimized"] as Slot[]).find(
     (slot) => slots[slot].state === "error",
   );
-  const importing = busy?.kind === "import";
+  const importing = busy?.kind === "import" || busy?.kind === "scan";
   const formats = (
     environment?.supportedFormats.length ? environment.supportedFormats : FALLBACK_FORMATS
   ).map((f) => f.replace(/^\./, "").toUpperCase());
@@ -453,12 +419,17 @@ export function Stage({
             <FileUp size={22} strokeWidth={1.5} aria-hidden="true" className="drop-icon" />
             <h1 className="drop-title">Open a 3D scan</h1>
             <p className="drop-text">
-              Drop a file anywhere in this window, or choose one. Kiln works on a copy and never
-              changes your original.
+              Drop a file or a whole folder anywhere in this window, or choose one. Kiln works on
+              copies and never changes your originals.
             </p>
-            <button type="button" className="button button-primary" onClick={onChoose}>
-              Choose file
-            </button>
+            <div className="drop-actions">
+              <button type="button" className="button button-primary" onClick={onChoose}>
+                Choose file
+              </button>
+              <button type="button" className="button button-quiet" onClick={onChooseFolder}>
+                Process a folder
+              </button>
+            </div>
             <p className="drop-formats" aria-label="Supported formats">
               {formats.join("  ")}
             </p>
@@ -469,12 +440,22 @@ export function Stage({
       {importing && (
         <div className="overlay">
           <div className="overlay-card" role="status" aria-live="polite">
-            <p className="overlay-title">Opening {busy.fileName ?? "asset"}</p>
-            <p className="overlay-text">{progress?.message ?? "Reading the source file"}</p>
-            <ProgressBar value={progress ? progress.percent / 100 : null} />
-            <button type="button" className="button button-quiet" onClick={onCancel}>
-              Cancel
-            </button>
+            {busy.kind === "scan" ? (
+              <>
+                <p className="overlay-title">Looking for 3D models</p>
+                <p className="overlay-text">Checking the folder and every folder inside it.</p>
+                <ProgressBar value={null} />
+              </>
+            ) : (
+              <>
+                <p className="overlay-title">Opening {busy.fileName ?? "asset"}</p>
+                <p className="overlay-text">{progress?.message ?? "Reading the source file"}</p>
+                <ProgressBar value={progress ? progress.percent / 100 : null} />
+                <button type="button" className="button button-quiet" onClick={onCancel}>
+                  Cancel
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -543,7 +524,7 @@ export function Stage({
 
       {dragging && (
         <div className="drop-target" aria-hidden="true">
-          <span>{asset ? "Drop to open this file instead" : "Drop to open"}</span>
+          <span>{asset ? "Drop to open this instead" : "Drop to open"}</span>
         </div>
       )}
     </div>

@@ -383,6 +383,25 @@ export async function createAssetService(config: AssetServiceConfig) {
       }
       return environment();
     },
+    /** Release one imported asset and all results, retaining only the user's originals. */
+    async releaseAsset(id: string) {
+      if (!sources.has(id)) return;
+      const dirs = [path.join(sessionDir, "assets", id)];
+      for (const [resultId, result] of results) {
+        if (result.info.sourceId !== id) continue;
+        dirs.push(path.join(sessionDir, "results", resultId));
+        results.delete(resultId);
+      }
+      sources.delete(id);
+      const removed = await Promise.allSettled(
+        dirs.map((dir) => fs.rm(dir, { recursive: true, force: true })),
+      );
+      if (removed.some((result) => result.status === "rejected"))
+        throw new KilnError(
+          "read-failed",
+          "Some temporary model files could not be removed. Close Kiln and try again.",
+        );
+    },
     importAsset,
     optimize,
     getAsset: async (id: string): Promise<AssetRecord | undefined> => sources.get(id)?.record,
