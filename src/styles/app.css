@@ -1395,16 +1395,18 @@ kbd {
   gap: var(--space-2);
 }
 
+/* A column, so the list and the preview can share or hand over the height whichever rows show. */
 .batch {
   position: relative;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--paper);
 }
 
 .batch-head {
+  flex: none;
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
   gap: var(--space-5);
@@ -1483,6 +1485,7 @@ kbd {
 }
 
 .batch-notes {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1508,6 +1511,7 @@ kbd {
 }
 
 .batch-scroll {
+  flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1518,15 +1522,17 @@ kbd {
 .batch-columns,
 .batch-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 76px 184px 28px;
+  grid-template-columns: 16px minmax(0, 1fr) 76px 184px 60px;
   gap: var(--space-3);
+  margin: 0 calc(-1 * var(--space-2));
+  padding-inline: var(--space-2);
 }
 
 .batch-columns {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: var(--space-3) 0 6px;
+  padding-block: var(--space-3) 6px;
   border-bottom: 1px solid var(--rule-strong);
   background: var(--paper);
   font-size: var(--text-xs);
@@ -1547,7 +1553,7 @@ kbd {
 
 .batch-row {
   align-items: start;
-  padding: 9px 0;
+  padding-block: 9px;
   border-bottom: 1px solid var(--rule);
   line-height: 20px;
 }
@@ -1681,11 +1687,305 @@ kbd {
   color: var(--brick);
 }
 
+.batch-reveal {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .batch-reveal .icon-button {
   margin-top: -4px;
 }
 
+.batch-reveal .icon-button[aria-pressed="true"] {
+  background: var(--blue-tint);
+  color: var(--blue);
+}
+
+/* Finished rows open their preview. Rows bleed slightly so the highlight has room around the text. */
+.batch-row[data-previewable] {
+  cursor: pointer;
+}
+
+.batch-row[data-previewable]:hover {
+  background: color-mix(in srgb, var(--well) 70%, transparent);
+}
+
+.batch-row[data-selected],
+.batch-row[data-selected]:hover {
+  background: var(--blue-tint);
+}
+
+/* While previewing, the stage takes the top and the list shares the height below it. */
+.batch-stage {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  border-bottom: 1px solid var(--rule);
+  container: folder-stage / inline-size;
+}
+
+.batch-stage-body {
+  display: grid;
+  min-height: 0;
+}
+
+.batch-stage-body[hidden],
+.batch-scroll[hidden] {
+  display: none;
+}
+
+.batch-stage .stage {
+  min-height: 0;
+}
+
+/* The handle between preview and list. A wide invisible hit area over the hairline, with a grip. */
+.sash {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  right: 0;
+  bottom: -6px;
+  height: 11px;
+  cursor: row-resize;
+  touch-action: none;
+  border-radius: 0;
+}
+
+.sash::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 5px;
+  height: 1px;
+  background: transparent;
+  transition: background-color var(--fast) var(--ease);
+}
+
+.sash::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 36px;
+  height: 5px;
+  margin-left: -18px;
+  border-radius: 3px;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  transition:
+    border-color var(--fast) var(--ease),
+    background-color var(--fast) var(--ease);
+}
+
+.sash:hover::before {
+  background: var(--rule-strong);
+}
+
+.sash:hover::after {
+  border-color: var(--ink-3);
+}
+
+.sash:active::before {
+  background: var(--blue);
+}
+
+.sash:active::after {
+  border-color: var(--blue);
+  background: var(--blue-tint);
+}
+
+.sash:focus-visible {
+  box-shadow: none;
+}
+
+.sash:focus-visible::after {
+  box-shadow: var(--focus);
+}
+
+.batch-stage-pending {
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.pager {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 2 * var(--space-4));
+  padding: 2px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--rule-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-float);
+}
+
+.pager .icon-button {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.pager-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.pager-path {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pager-count {
+  flex: none;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
+/* Preview folded away: the pager docks as a bar, so the open model and its arrows stay at hand. */
+.batch-stage[data-folded] {
+  background: var(--surface);
+}
+
+.batch-stage[data-folded] .pager {
+  position: static;
+  transform: none;
+  max-width: none;
+  height: 40px;
+  padding: 0 var(--space-4) 0 calc(var(--space-6) - var(--space-2));
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+.batch-stage[data-folded] .pager-rule {
+  display: none;
+}
+
+/* Matches "Show list" on the folded list bar, so both panels come back the same way. */
+.pager-show {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  color: var(--blue);
+  cursor: pointer;
+  transition: background-color var(--fast) var(--ease);
+}
+
+.pager-show:hover {
+  background: var(--well);
+}
+
+.batch-stage[data-folded] .pager-path {
+  max-width: min(520px, 50vw);
+}
+
+/* List folded away: one bar keeps the folder's progress in sight and brings the list back. */
+.batch-shelf {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-5) 0 var(--space-6);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--fast) var(--ease);
+}
+
+.batch-shelf:hover {
+  background: color-mix(in srgb, var(--well) 60%, var(--surface));
+}
+
+.batch-shelf:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--blue);
+}
+
+.batch-shelf-count {
+  flex: none;
+  font-weight: 550;
+  color: var(--ink);
+}
+
+.batch-shelf-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.batch-shelf-status .batch-name {
+  color: var(--ink-2);
+}
+
+.batch-shelf-percent {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.batch-shelf-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-weight: 550;
+  color: var(--blue);
+}
+
+.batch-columns-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.batch-columns .icon-button {
+  width: 24px;
+  height: 24px;
+  margin: -6px 2px -4px 0;
+}
+
+.pager-rule {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--rule);
+}
+
 .batch-empty {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1838,5 +2138,27 @@ kbd {
   .stage-toolbar-top kbd,
   .stage-hint-gesture {
     display: none;
+  }
+}
+
+/* A folder preview also carries the pager at the bottom, so the hints give way to it sooner. */
+@container stage (max-width: 1040px) {
+  .stage[data-folder] .stage-hint-gesture {
+    display: none;
+  }
+}
+
+@container stage (max-width: 760px) {
+  .stage[data-folder] .stage-hint {
+    display: none;
+  }
+}
+
+/* Narrow folder stage: the pager moves left, clear of 1:1 detail and Reset. */
+@container folder-stage (max-width: 760px) {
+  .pager {
+    left: var(--space-4);
+    transform: none;
+    max-width: calc(100% - 232px);
   }
 }

@@ -604,12 +604,35 @@ async function batchSmoke() {
       if (!(await exists(file)) || !(await exists(file.replace(/\.glb$/i, ".recipe.json"))))
         throw new Error("Batch output or recipe is missing.");
     }
+    // Finished models stay previewable: both sides load, a rerun keeps them, a reprocess replaces them.
+    const loads = (urls) =>
+      page.evaluate(
+        (list) => Promise.all(list.map(async (url) => (await fetch(url)).status)),
+        urls,
+      );
+    const previewUrls = (plan) =>
+      plan.items.flatMap((item) =>
+        item.preview ? [item.preview.asset.previewUrl, item.preview.result.previewUrl] : [],
+      );
+    const firstPreviews = previewUrls(first);
+    if (firstPreviews.length !== 4 || (await loads(firstPreviews)).some((code) => code !== 200))
+      throw new Error("Finished models have no loadable preview.");
+    if (previewUrls(second).join() !== firstPreviews.join())
+      throw new Error("An up to date rerun dropped its previews.");
     const changed = await page.evaluate(
       async ({ id, options }) => window.kiln.runBatch(id, options),
       { id: first.id, options: PRESETS.lossless },
     );
     if (!changed.items.every((item) => item.status === "done"))
       throw new Error("Changed settings did not reprocess all items.");
+    const changedPreviews = previewUrls(changed);
+    if (
+      changedPreviews.length !== 4 ||
+      changedPreviews.some((url) => firstPreviews.includes(url)) ||
+      (await loads(firstPreviews)).some((code) => code !== 404) ||
+      (await loads(changedPreviews)).some((code) => code !== 200)
+    )
+      throw new Error("Reprocessing did not replace the previews.");
     const cancellation = await page.evaluate(
       async ({ id, options }) => {
         const updates = [];

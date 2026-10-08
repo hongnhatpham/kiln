@@ -383,16 +383,19 @@ export async function createAssetService(config: AssetServiceConfig) {
       }
       return environment();
     },
-    /** Release one imported asset and all results, retaining only the user's originals. */
-    async releaseAsset(id: string) {
+    /**
+     * Release one imported asset and all results, retaining only the user's originals. With
+     * `keepSource`, only the results go and the source stays open, so its preview still loads.
+     */
+    async releaseAsset(id: string, keepSource = false) {
       if (!sources.has(id)) return;
-      const dirs = [path.join(sessionDir, "assets", id)];
+      const dirs = keepSource ? [] : [path.join(sessionDir, "assets", id)];
       for (const [resultId, result] of results) {
         if (result.info.sourceId !== id) continue;
         dirs.push(path.join(sessionDir, "results", resultId));
         results.delete(resultId);
       }
-      sources.delete(id);
+      if (!keepSource) sources.delete(id);
       const removed = await Promise.allSettled(
         dirs.map((dir) => fs.rm(dir, { recursive: true, force: true })),
       );

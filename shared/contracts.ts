@@ -95,6 +95,13 @@ export interface BatchItem {
   warnings?: number;
   /** Plain-language reason for "skipped" ("Already up to date", "Needs Blender") or "failed". */
   message?: string;
+  /** The source and web copy to compare on the stage. Only for models finished in this session. */
+  preview?: BatchPreview;
+}
+export interface BatchPreview {
+  asset: AssetInfo;
+  /** `previewUrl` serves the exported web copy itself. */
+  result: OptimizationResult;
 }
 export interface BatchPlan {
   id: string;

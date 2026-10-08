@@ -49,6 +49,8 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
   const [batch, setBatch] = useState<BatchPlan | null>(null);
   /** Settings of the last folder run, to tell when a re-run would change the results. */
   const [batchOptions, setBatchOptions] = useState<OptimizationOptions | null>(null);
+  /** The folder model shown on the stage, by its path in the folder. */
+  const [previewing, setPreviewing] = useState<string | null>(null);
   const cancelling = useRef(false);
 
   useEffect(() => api.onProgress(setProgress), [api]);
@@ -128,6 +130,7 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
       setResult(null);
       setReceipt(null);
       setBatch(null);
+      setPreviewing(null);
     },
     [run, environment],
   );
@@ -144,6 +147,7 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
       if (!next) return;
       setBatch(next);
       setBatchOptions(null);
+      setPreviewing(null);
       setAsset(null);
       setResult(null);
       setReceipt(null);
@@ -242,13 +246,15 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
   const processFolder = useCallback(async () => {
     if (!batch) return;
     const used = options;
-    // Every model is checked again on each run, so start the list fresh.
+    // Every model is checked again on each run, so start the list fresh. Earlier previews stay
+    // viewable until their model is processed again.
     setBatch({
       ...batch,
-      items: batch.items.map(({ relativePath, sourceBytes }) => ({
+      items: batch.items.map(({ relativePath, sourceBytes, preview }) => ({
         relativePath,
         sourceBytes,
         status: "waiting",
+        preview,
       })),
     });
     const final = await run(
@@ -280,6 +286,7 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
   const closeFolder = useCallback(() => {
     setBatch(null);
     setBatchOptions(null);
+    setPreviewing(null);
     setError(null);
     setNotice(null);
   }, []);
@@ -321,6 +328,8 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
     [choose, chooseFolder, locateBlender, optimize],
   );
 
+  const preview = batch?.items.find((item) => item.relativePath === previewing)?.preview ?? null;
+
   return (
     <div className="app">
       <Header
@@ -337,6 +346,26 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
         {batch ? (
           <BatchView
             batch={batch}
+            previewing={previewing}
+            onPreview={setPreviewing}
+            stage={
+              preview && (
+                <Stage
+                  folder
+                  asset={preview.asset}
+                  result={preview.result}
+                  busy={busy}
+                  progress={null}
+                  error={null}
+                  environment={environment}
+                  onDrop={drop}
+                  onChoose={choose}
+                  onChooseFolder={chooseFolder}
+                  onCancel={cancel}
+                  onAction={act}
+                />
+              )
+            }
             running={busy?.kind === "batch"}
             disabled={!!busy}
             progress={progress}
