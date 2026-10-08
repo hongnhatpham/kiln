@@ -272,7 +272,6 @@ export class ComparisonViewer {
       }
     });
     this.roots[slot] = root;
-    this.applySurface(root);
     this.scene.add(root);
     if (!this.bounds) this.frameModel(box);
     if (!this.texelWorld && this.referenceTexels > 0) {
@@ -281,6 +280,8 @@ export class ComparisonViewer {
       if (area > 0)
         this.texelWorld = Math.sqrt(area / (this.referenceTexels * this.referenceTexels * 0.7));
     }
+    // After measuring: wire overlays share the geometry and would count its area twice.
+    this.applySurface(root);
   }
 
   private frameModel(box: THREE.Box3) {
