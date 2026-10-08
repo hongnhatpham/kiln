@@ -1,6 +1,6 @@
 {
   "name": "kiln",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Prepare archival 3D assets for the public web, locally.",
   "author": {
