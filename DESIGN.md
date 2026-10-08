@@ -68,7 +68,7 @@ spacing:
 
 A calm museum workbench. Kiln feels like a conservation studio inside a public collection: warm gallery neutrals, a seamless photographic sweep behind the artifact, and catalog-card typography for the record. The artifact is always the loudest thing on screen. Chrome stays quiet, light, and precise, in the spirit of Smithsonian collection pages rather than a dark SaaS dashboard.
 
-Signature element: the comparison stage. One camera drives a split view with a white hairline divider, so source and optimized halves stay pixel-aligned while you orbit. Raking light and a 1:1 texel zoom turn it into an inspection tool for surface detail.
+Signature element: the comparison stage. One camera drives a split view with a white hairline divider, so source and optimized halves stay pixel-aligned while you orbit. Raking light, a 1:1 texel zoom, and clay and wire surfaces turn it into an inspection tool for surface detail and decimation.
 
 Motion is purposeful and short: 120 to 180 ms eases on state changes, a 420 ms camera glide for reset and focus. There are no looping animations or idle render loops. The 3D view renders only on interaction, state change, or resize. Reduced motion removes transitions and makes camera moves instant.
 
@@ -103,6 +103,7 @@ All fonts are bundled from `src/assets/fonts` under the SIL Open Font License. N
 - **Switches**: 32 by 18 px, blue when on. Hints sit under the label and must state the real effect, including what lossless does not protect (resizing).
 - **Sliders**: 4 px track with blue fill to the value, 14 px surface thumb with blue ring. Disabled sliders go gray and their value reads "Lossless" or "PNG, lossless" instead of a number.
 - **Risk notes**: ochre text on ochre tint with a triangle icon, placed directly under the control they concern.
+- **Stage toolbar**: one centered row of three segments: Source, Split, Optimized (1 to 3), then Texture, Clay, Wire (M cycles), then Studio, Raking (L toggles). Below 900 px of stage width the surface and lighting segments show icons only, keeping their names as tooltips and for screen readers. Clay is a warm matte gray with every map removed, so a normal map cannot hide lost geometry. Wire draws faint ink edges over clay, so dense areas darken instead of going solid. Without textures, the split labels show triangle counts instead of texture specs.
 - **Split divider**: 1 px white line with a 28 px round handle. Draggable, and a keyboard slider (arrows, Shift for larger steps, Home, End).
 - **Overlay and error cards**: surface, 10 px radius, card shadow, short rise-in. Errors name the problem and offer the remedy as buttons (Locate Blender, Choose another file, Try again).
 - **Progress**: 4 px bar. Determinate when the engine reports a percent. When unknown, a still partial bar, never a looping shimmer.

@@ -10,6 +10,8 @@ import dracoWrapperUrl from "../assets/draco/draco_wasm_wrapper.js.txt?url";
 export type Slot = "source" | "optimized";
 export type ViewMode = "source" | "optimized" | "split";
 export type Lighting = "studio" | "raking";
+/** Texture shows the model as published. Clay drops every map so only geometry shades. Wire adds triangle edges. */
+export type Surface = "texture" | "clay" | "wire";
 
 export type SlotStatus =
   | { state: "empty" }
@@ -37,6 +39,7 @@ class BundledDracoLoader extends DRACOLoader {
   }
 }
 
+const WIRE_OVERLAY = "kiln-wire-overlay";
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
 
@@ -61,6 +64,29 @@ export class ComparisonViewer {
   private mode: ViewMode = "source";
   private split = 0.5;
   private lighting: Lighting = "studio";
+  private surface: Surface = "texture";
+  /** Original materials, restored when leaving clay or wire. */
+  private readonly originals = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+  // Polygon offset pushes clay faces back a little so edges drawn on the same surface win the depth test.
+  private readonly clay = new THREE.MeshStandardMaterial({
+    color: 0xb3ada1,
+    roughness: 0.9,
+    metalness: 0,
+    // Less ambient fill than textured mode so the key light models the form.
+    envMapIntensity: 0.6,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+  // Faint ink lines: dense regions read darker instead of turning solid black.
+  private readonly wire = new THREE.MeshBasicMaterial({
+    color: 0x1d1e20,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false,
+  });
   private frame = 0;
   private animation = 0;
   private offset: THREE.Vector3 | null = null;
@@ -178,6 +204,13 @@ export class ComparisonViewer {
     this.invalidate();
   }
 
+  setSurface(surface: Surface) {
+    if (surface === this.surface) return;
+    this.surface = surface;
+    for (const root of Object.values(this.roots)) if (root) this.applySurface(root);
+    this.invalidate();
+  }
+
   resetView() {
     const home = this.home();
     if (!home) return;
@@ -206,6 +239,8 @@ export class ComparisonViewer {
     this.unload("source");
     this.unload("optimized");
     this.envMap.dispose();
+    this.clay.dispose();
+    this.wire.dispose();
     this.draco.dispose();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("webglcontextlost", this.handleContextLost);
@@ -237,6 +272,7 @@ export class ComparisonViewer {
       }
     });
     this.roots[slot] = root;
+    this.applySurface(root);
     this.scene.add(root);
     if (!this.bounds) this.frameModel(box);
     if (!this.texelWorld && this.referenceTexels > 0) {
@@ -301,8 +337,41 @@ export class ComparisonViewer {
     const root = this.roots[slot];
     if (!root) return;
     this.scene.remove(root);
+    this.restoreSurface(root);
     disposeObject(root);
     this.roots[slot] = null;
+  }
+
+  /** Swap in clay, and in wire mode an edge overlay that shares the mesh geometry. */
+  private applySurface(root: THREE.Object3D) {
+    this.restoreSurface(root);
+    if (this.surface === "texture") return;
+    const meshes: THREE.Mesh[] = [];
+    root.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh);
+    });
+    for (const mesh of meshes) {
+      this.originals.set(mesh, mesh.material);
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(() => this.clay) : this.clay;
+      if (this.surface !== "wire") continue;
+      const edges = new THREE.Mesh(mesh.geometry, this.wire);
+      edges.name = WIRE_OVERLAY;
+      edges.raycast = () => {};
+      mesh.add(edges);
+    }
+  }
+
+  private restoreSurface(root: THREE.Object3D) {
+    const overlays: THREE.Object3D[] = [];
+    root.traverse((object) => {
+      if (object.name === WIRE_OVERLAY) overlays.push(object);
+      const mesh = object as THREE.Mesh;
+      const original = this.originals.get(mesh);
+      if (!original) return;
+      mesh.material = original;
+      this.originals.delete(mesh);
+    });
+    for (const overlay of overlays) overlay.removeFromParent();
   }
 
   private fit() {

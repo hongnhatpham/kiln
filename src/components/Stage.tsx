@@ -1,7 +1,10 @@
 import {
   AlertTriangle,
+  Box,
   ChevronsLeftRight,
   FileUp,
+  Image,
+  Network,
   RotateCcw,
   ScanSearch,
   Sun,
@@ -30,6 +33,7 @@ import {
   type Lighting,
   type Slot,
   type SlotStatus,
+  type Surface,
   type ViewMode,
 } from "../viewer/ComparisonViewer.ts";
 import { useWindowDrop } from "../lib/useWindowDrop.ts";
@@ -67,10 +71,16 @@ function textureSpec(texture: TextureInfo | undefined): string {
   return `${formatPixels(Math.max(texture.width, texture.height))} ${format}`;
 }
 
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const SURFACES: Surface[] = ["texture", "clay", "wire"];
+
+/** Text entry swallows shortcuts. Radios and switches do not, so M and L work right after a click. */
 function isTyping(target: EventTarget | null) {
+  if (target instanceof HTMLInputElement)
+    return !["radio", "checkbox", "range", "button"].includes(target.type);
   return (
     target instanceof HTMLElement &&
-    (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName))
+    (target.isContentEditable || ["SELECT", "TEXTAREA"].includes(target.tagName))
   );
 }
 
@@ -98,6 +108,7 @@ export function Stage({
   const [mode, setMode] = useState<ViewMode>("source");
   const [split, setSplit] = useState(0.5);
   const [lighting, setLighting] = useState<Lighting>("studio");
+  const [surface, setSurface] = useState<Surface>("texture");
   const [scale, setScale] = useState<number | null>(null);
   const [contextLost, setContextLost] = useState(false);
   /** The renderer could not start, usually because WebGL is unavailable. The rest of the app still works. */
@@ -175,6 +186,7 @@ export function Stage({
   useEffect(() => viewerRef.current?.setMode(view), [view, viewerKey]);
   useEffect(() => viewerRef.current?.setSplit(split), [split, viewerKey]);
   useEffect(() => viewerRef.current?.setLighting(lighting), [lighting, viewerKey]);
+  useEffect(() => viewerRef.current?.setSurface(surface), [surface, viewerKey]);
 
   const ready = slots.source.state === "ready" || slots.optimized.state === "ready";
 
@@ -189,6 +201,8 @@ export function Stage({
       else if (key === "r") viewerRef.current?.resetView();
       else if (key === "t") viewerRef.current?.showTexels();
       else if (key === "l") setLighting((value) => (value === "studio" ? "raking" : "studio"));
+      else if (key === "m")
+        setSurface((value) => SURFACES[(SURFACES.indexOf(value) + 1) % SURFACES.length]);
       else return;
       setCoach(false);
     };
@@ -222,8 +236,15 @@ export function Stage({
     setSplit(Math.min(0.98, Math.max(0.02, next)));
   };
 
-  const sourceSpec = textureSpec(roleTexture(asset, "color"));
-  const optimizedSpec = textureSpec(result?.textures.find((texture) => texture.role === "color"));
+  // Without textures the useful comparison is geometry, so the labels switch to triangle counts.
+  const meshSpec = (triangles: number | undefined) =>
+    triangles ? `${compact.format(triangles)} triangles` : "";
+  const sourceSpec =
+    surface === "texture" ? textureSpec(roleTexture(asset, "color")) : meshSpec(asset?.triangles);
+  const optimizedSpec =
+    surface === "texture"
+      ? textureSpec(result?.textures.find((texture) => texture.role === "color"))
+      : meshSpec(result?.triangles);
   const loadingSlot = (["source", "optimized"] as Slot[]).find(
     (slot) => slots[slot].state === "loading" && (slot === "source" ? wantSource : wantOptimized),
   );
@@ -326,12 +347,41 @@ export function Stage({
               </label>
             ))}
           </fieldset>
-        </div>
-      )}
-
-      {asset && !noGraphics && (
-        <div className="stage-toolbar stage-toolbar-light">
-          <fieldset className="segmented segmented-floating">
+          <fieldset className="segmented segmented-floating segmented-display">
+            <legend className="sr-only">Surface</legend>
+            {(
+              [
+                ["texture", "Texture", Image, "Textures as published (M to switch)"],
+                [
+                  "clay",
+                  "Clay",
+                  Box,
+                  "Plain geometry without textures, so decimation cannot hide behind the normal map (M to switch)",
+                ],
+                [
+                  "wire",
+                  "Wire",
+                  Network,
+                  "Clay with every triangle edge drawn on top (M to switch)",
+                ],
+              ] as const
+            ).map(([value, label, Icon, title]) => (
+              <label key={value} title={title}>
+                <input
+                  type="radio"
+                  name="surface"
+                  value={value}
+                  checked={surface === value}
+                  onChange={() => setSurface(value)}
+                />
+                <span>
+                  <Icon size={14} aria-hidden="true" />
+                  <span className="segment-label">{label}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <fieldset className="segmented segmented-floating segmented-display">
             <legend className="sr-only">Lighting</legend>
             {(
               [
@@ -354,7 +404,7 @@ export function Stage({
                 />
                 <span>
                   <Icon size={14} aria-hidden="true" />
-                  {label}
+                  <span className="segment-label">{label}</span>
                 </span>
               </label>
             ))}

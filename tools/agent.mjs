@@ -271,6 +271,14 @@ async function smoke() {
       await page.keyboard.press("ArrowRight");
       if ((await divider.getAttribute("aria-valuenow")) !== "52")
         throw new Error("Comparison divider keyboard interaction failed.");
+      for (const surface of ["clay", "wire"]) {
+        await page.locator(`input[name="surface"][value="${surface}"]`).check();
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: path.join(outputDir, `surface-${surface}.png`) });
+      }
+      await page.keyboard.press("m");
+      if (!(await page.locator('input[name="surface"][value="texture"]').isChecked()))
+        throw new Error("The M shortcut did not cycle back to textures.");
       await page.getByRole("button", { name: "1:1 detail", exact: true }).click();
       await page.locator('input[name="lighting"][value="raking"]').check();
       await page.waitForTimeout(500);
@@ -350,6 +358,7 @@ async function smoke() {
               "dialog cancellation",
               "invalid-file recovery",
               "comparison divider keyboard control",
+              "clay and wire surfaces",
               "detail and raking light",
               "orbit and zoom",
               "advanced customization",

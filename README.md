@@ -52,7 +52,7 @@ You can check each download against `SHA256SUMS.txt` on the download page.
 1. **Open a model.** Drop a file into the Kiln window, or click **Choose file**. Kiln works on a copy.
 2. **Choose a quality.** Start with **Detailed web**. It keeps fine surface detail sharp for close study.
 3. **Optimize.** Click **Optimize** and wait for the result.
-4. **Compare up close.** Drag the divider to see the original and the result side by side. Zoom in, try **1:1 detail**, and switch to **Raking** light to reveal bumps and carving. Check every area that matters to you.
+4. **Compare up close.** Drag the divider to see the original and the result side by side. Zoom in, try **1:1 detail**, and switch to **Raking** light to reveal bumps and carving. If you removed triangles, switch to **Clay** to hide the textures and see the shape alone, or **Wire** to see every triangle edge. Check every area that matters to you.
 5. **Export.** Click **Export GLB**. Kiln saves two files next to each other: the web-ready model and its recipe.
 
 ### Process a whole folder

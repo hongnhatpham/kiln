@@ -324,11 +324,6 @@ kbd {
   transform: translateX(-50%);
 }
 
-.stage-toolbar-light {
-  top: var(--space-4);
-  right: var(--space-4);
-}
-
 .stage-toolbar-bottom {
   right: var(--space-4);
   bottom: var(--space-4);
@@ -1814,6 +1809,22 @@ kbd {
 @media (max-width: 1100px) {
   .stage-hint {
     max-width: 40%;
+  }
+}
+
+/* Medium stage: surface and lighting shrink to icons, keeping their names for screen readers and tooltips. */
+@container stage (max-width: 900px) {
+  .segmented-display .segment-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .segmented-display label > span {
+    padding: 0 9px;
   }
 }
 
