@@ -103,7 +103,8 @@
       ],
       "category": "public.app-category.graphics-design",
       "icon": "resources/kiln.png",
-      "identity": null,
+      "identity": "-",
+      "hardenedRuntime": false,
       "artifactName": "Kiln-macOS-${arch}.${ext}"
     },
     "linux": {

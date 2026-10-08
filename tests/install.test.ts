@@ -73,6 +73,13 @@ function fixture(managers: Manager[] = ["apt-get"], root = false) {
         ],
         { cwd: directory, encoding: "utf8" },
       ),
+    /** Runs the script the way `curl ... | sh` does, from standard input. */
+    pipe: (script = readFileSync(installer, "utf8")) =>
+      spawnSync(
+        shell,
+        ["-c", 'export HOME="$PWD/home space" TMPDIR="$PWD"; export PATH="$PWD/bin"; exec sh -s'],
+        { cwd: directory, encoding: "utf8", input: script },
+      ),
     dispose: () => rmSync(directory, { recursive: true, force: true }),
   };
 }
@@ -121,6 +128,25 @@ for (const manager of ["apt-get", "dnf", "zypper"] as const) {
     },
   );
 }
+
+test(
+  "installs when piped from curl, and a cut-off download runs nothing",
+  { skip: !shellAvailable },
+  () => {
+    const setup = fixture(["apt-get"]);
+    try {
+      const script = readFileSync(installer, "utf8");
+      const truncated = setup.pipe(script.slice(0, script.lastIndexOf('main "$@"') - 40));
+      assert.notEqual(truncated.status, 0);
+      assert.deepEqual(setup.events(), []);
+      const result = setup.pipe();
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(readFileSync(join(setup.directory, "installed-package"), "utf8"), "fixture deb");
+    } finally {
+      setup.dispose();
+    }
+  },
+);
 
 test(
   "root uses apt-get directly when several managers are available",

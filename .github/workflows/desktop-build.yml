@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 25
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # macOS builds are ad-hoc signed, which uses no secrets, so pull requests sign too.
+      CSC_FOR_PULL_REQUEST: "true"
       ELECTRON_BUILDER_COMPRESSION_LEVEL: "5"
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +76,16 @@ jobs:
           (cd artifacts/local-release && shasum -a 256 *.zip > SHA256SUMS.txt)
           sed "s|^release_url=.*|release_url=file://$GITHUB_WORKSPACE/artifacts/local-release|" install.sh > artifacts/install-local.sh
           sh artifacts/install-local.sh
-          sh artifacts/install-local.sh
+          curl -fsSL "file://$GITHUB_WORKSPACE/artifacts/install-local.sh" | sh
+      - name: Verify macOS signatures
+        if: matrix.platform == 'macos'
+        # A broken signature makes macOS report the app as damaged, with no way to approve it.
+        run: |
+          codesign --verify --deep --strict --verbose=2 "$HOME/Applications/Kiln.app"
+          mount=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" release/Kiln-macOS-${{ matrix.arch }}.dmg
+          codesign --verify --deep --strict --verbose=2 "$mount/Kiln.app"
+          hdiutil detach "$mount"
       - name: Exercise packaged macOS app
         if: matrix.platform == 'macos'
         run: pnpm agent smoke --input artifacts/fixture.glb --out artifacts/smoke --executable "$HOME/Applications/Kiln.app/Contents/MacOS/Kiln" ${{ matrix.arch == 'x64' && '--allow-no-graphics' || '' }}
