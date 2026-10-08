@@ -6,6 +6,7 @@ export type WorkerMethod =
   | "environment"
   | "importAsset"
   | "optimize"
+  | "releaseAsset"
   | "getAsset"
   | "getResult"
   | "setBlenderPath";

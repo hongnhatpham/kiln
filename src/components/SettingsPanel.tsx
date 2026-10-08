@@ -2,6 +2,7 @@ import { ChevronDown, TriangleAlert } from "lucide-react";
 import { useId, useState } from "react";
 import type {
   AssetInfo,
+  BatchPlan,
   OptimizationOptions,
   OptimizationResult,
   ProgressUpdate,
@@ -30,6 +31,10 @@ import { ProgressBar } from "./ProgressBar.tsx";
 
 interface PanelProps {
   asset: AssetInfo | null;
+  /** When a folder is open, the footer action processes the whole folder. */
+  batch: BatchPlan | null;
+  /** Settings changed since the last folder run. */
+  batchStale: boolean;
   options: OptimizationOptions;
   result: OptimizationResult | null;
   stale: boolean;
@@ -67,6 +72,8 @@ function formatLength(meters: number): string {
 
 export function SettingsPanel({
   asset,
+  batch,
+  batchStale,
   options,
   result,
   stale,
@@ -88,7 +95,8 @@ export function SettingsPanel({
     onChange({ ...PRESETS[id] });
   };
 
-  const optimizing = busy?.kind === "optimize";
+  const processing = busy?.kind === "batch";
+  const optimizing = busy?.kind === "optimize" || processing;
   const extent = asset ? Math.max(...asset.dimensions) : 0;
   const estimate = asset ? estimateGpuBytes(asset, options) : 0;
   const needs = viewerNeeds(
@@ -345,7 +353,18 @@ export function SettingsPanel({
           </dl>
         )}
 
-        {optimizing ? (
+        {batch ? (
+          <BatchFooter
+            batch={batch}
+            stale={batchStale}
+            busy={busy}
+            processing={processing}
+            progress={progress}
+            notice={notice}
+            onProcess={onOptimize}
+            onCancel={onCancel}
+          />
+        ) : optimizing ? (
           <div className="working" role="status" aria-live="polite">
             <div className="working-row">
               <span>{progress?.message ?? "Starting"}</span>
@@ -384,5 +403,74 @@ export function SettingsPanel({
         )}
       </footer>
     </aside>
+  );
+}
+
+function BatchFooter({
+  batch,
+  stale,
+  busy,
+  processing,
+  progress,
+  notice,
+  onProcess,
+  onCancel,
+}: {
+  batch: BatchPlan;
+  stale: boolean;
+  busy: Busy | null;
+  processing: boolean;
+  progress: ProgressUpdate | null;
+  notice: string | null;
+  onProcess(): void;
+  onCancel(): void;
+}) {
+  const total = batch.items.length;
+  const current = batch.items.findIndex((item) => item.status === "processing");
+  const ran = batch.items.some(
+    (item) => item.status !== "waiting" && item.message !== "Needs Blender",
+  );
+  const runnable = batch.items.filter((item) => item.message !== "Needs Blender").length;
+
+  if (processing) {
+    const fraction = current < 0 ? null : (current + (progress?.percent ?? 0) / 100) / total;
+    return (
+      <div className="working" role="status" aria-live="polite">
+        <div className="working-row">
+          <span>{current < 0 ? "Finishing" : `Model ${current + 1} of ${total}`}</span>
+          {fraction !== null && (
+            <span className="working-percent">{Math.floor(fraction * 100)}%</span>
+          )}
+        </div>
+        <ProgressBar value={fraction} />
+        <button type="button" className="button button-quiet button-block" onClick={onCancel}>
+          Stop
+        </button>
+      </div>
+    );
+  }
+  return (
+    <>
+      <button
+        type="button"
+        className={
+          ran && !stale ? "button button-quiet button-block" : "button button-primary button-block"
+        }
+        onClick={onProcess}
+        disabled={!!busy || !runnable}
+      >
+        {ran ? "Process again" : runnable === 1 ? "Process 1 model" : `Process ${runnable} models`}
+      </button>
+      <p className="footer-note" role="status">
+        {notice ??
+          (!total
+            ? "Choose a folder that holds 3D models."
+            : !ran
+              ? "Each model is saved with its recipe. Originals are not changed."
+              : stale
+                ? "Settings changed. Process again to update every model."
+                : "Process again any time to pick up changes. Up to date models are skipped.")}
+      </p>
+    </>
   );
 }

@@ -4,9 +4,19 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { EngineClient } from "./worker-client.js";
+import { normalizeOptions } from "../engine/options.js";
+import {
+  scanBatch,
+  defaultBatchOutput,
+  batchOutputs,
+  batchUpToDate,
+  sanitizeStem,
+} from "../shared/batch.js";
 import { exportFiles } from "../shared/export.js";
 import type {
   AssetInfo,
+  BatchPlan,
+  BatchUpdate,
   EnvironmentInfo,
   ExportReceipt,
   OptimizationOptions,
@@ -37,6 +47,11 @@ const previewFiles = new Map<string, string>();
 const revealable = new Set<string>();
 const assets = new Map<string, AssetRecord>();
 const results = new Map<string, ResultRecord>();
+const batches = new Map<string, BatchPlan>();
+let batchCancelled = false;
+let runningBatch: string | null = null;
+/** While a folder runs, opening and optimizing a model share one bar: opening fills the first quarter. */
+let progressSpan: [number, number] | null = null;
 const normalize = (value: string) =>
   process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
 const previewUrl = (id: string) => `kiln://asset/${encodeURIComponent(id)}.glb`;
@@ -79,7 +94,203 @@ async function importAsset(input: string): Promise<AssetInfo> {
   });
 }
 
+async function planBatch(input: unknown): Promise<BatchPlan> {
+  if (typeof input !== "string" || !path.isAbsolute(input))
+    throw new Error("Choose a local folder of models.");
+  const sourceDir = path.resolve(input),
+    outputDir = defaultBatchOutput(sourceDir);
+  const plan: BatchPlan = {
+    id: randomUUID(),
+    sourceDir,
+    outputDir,
+    items: await scanBatch(sourceDir, outputDir, (await environment()).supportedFormats),
+  };
+  batches.set(plan.id, plan);
+  return plan;
+}
+function batchPlan(id: unknown): BatchPlan {
+  const plan = typeof id === "string" ? batches.get(id) : undefined;
+  if (!plan) throw new Error("Choose a folder before processing.");
+  return plan;
+}
+function emitBatch(plan: BatchPlan, index: number, operationId?: string) {
+  const update: BatchUpdate = { batchId: plan.id, index, item: plan.items[index], operationId };
+  if (window && !window.isDestroyed()) window.webContents.send("kiln:batch", update);
+}
+async function runBatch(plan: BatchPlan, input: unknown): Promise<BatchPlan> {
+  const options = normalizeOptions(input);
+  return exclusive(async () => {
+    runningBatch = plan.id;
+    batchCancelled = false;
+    const outputs = batchOutputs(plan.items, plan.outputDir);
+    for (let index = 0; index < plan.items.length; index++) {
+      const item = plan.items[index];
+      item.status = "waiting";
+      delete item.message;
+      delete item.modelPath;
+      delete item.outputBytes;
+      delete item.warnings;
+      emitBatch(plan, index);
+    }
+    try {
+      for (let index = 0; index < plan.items.length; index++) {
+        if (batchCancelled) break;
+        const item = plan.items[index];
+        const operationId = randomUUID();
+        let source: AssetRecord | undefined;
+        const update = (changes: Partial<typeof item>) => {
+          delete item.message;
+          delete item.modelPath;
+          delete item.outputBytes;
+          delete item.warnings;
+          Object.assign(item, changes);
+          emitBatch(plan, index, operationId);
+        };
+        try {
+          const inputPath = path.join(plan.sourceDir, item.relativePath);
+          const { modelPath, recipePath } = outputs.get(item.relativePath)!;
+          item.sourceBytes = (await fs.stat(inputPath)).size;
+          if (batchCancelled) break;
+          const supported = (await environment()).supportedFormats;
+          if (batchCancelled) break;
+          if (!supported.includes(path.extname(inputPath).slice(1).toLowerCase())) {
+            update({ status: "skipped", message: "Needs Blender" });
+            continue;
+          }
+          if (
+            await batchUpToDate(
+              modelPath,
+              recipePath,
+              path.basename(inputPath),
+              item.sourceBytes,
+              options,
+            )
+          ) {
+            revealable.add(normalize(modelPath));
+            revealable.add(normalize(plan.outputDir));
+            update({ status: "skipped", message: "Already up to date" });
+            continue;
+          }
+          update({ status: "processing" });
+          progressSpan = [0, 25];
+          source = await engine.call<AssetRecord>("importAsset", [inputPath, operationId]);
+          progressSpan = [25, 100];
+          if (batchCancelled) throw new Error("Cancelled.");
+          const result = await engine.call<ResultRecord>("optimize", [
+            source.info.id,
+            options,
+            operationId,
+          ]);
+          if (batchCancelled) throw new Error("Cancelled.");
+          await fs.mkdir(path.dirname(modelPath), { recursive: true });
+          if (batchCancelled) throw new Error("Cancelled.");
+          await exportFiles({
+            modelSource: result.modelPath,
+            modelPath,
+            recipePath,
+            recipe: {
+              ...result.recipe,
+              source: {
+                ...(result.recipe.source as Record<string, unknown>),
+                relativePath: item.relativePath,
+              },
+              app: "Kiln",
+              version: app.getVersion(),
+              exportedAt: new Date().toISOString(),
+            },
+            protectedSources: [
+              ...source.protectedSources,
+              ...[...assets.values()].flatMap((asset) => asset.protectedSources),
+            ],
+          });
+          revealable.add(normalize(modelPath));
+          revealable.add(normalize(recipePath));
+          revealable.add(normalize(plan.outputDir));
+          update({
+            status: "done",
+            modelPath,
+            outputBytes: result.info.bytes,
+            warnings: result.info.warnings.length,
+          });
+        } catch (error) {
+          const cancelled =
+            batchCancelled || (error instanceof Error && error.name === "AbortError");
+          update({
+            status: cancelled ? "cancelled" : "failed",
+            message: cancelled
+              ? "Cancelled."
+              : error instanceof Error
+                ? error.message
+                : "This model could not be processed. Try opening it separately.",
+          });
+          if (cancelled) break;
+        } finally {
+          if (source) {
+            try {
+              await engine.call("releaseAsset", [source.info.id]);
+            } catch (error) {
+              // Cleanup must not erase a committed export or change cancellation into failure.
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "The temporary model files could not be removed.";
+              item.message = [item.message, message].filter(Boolean).join(" ");
+              emitBatch(plan, index, operationId);
+            }
+          }
+        }
+      }
+      return plan;
+    } finally {
+      runningBatch = null;
+      progressSpan = null;
+    }
+  });
+}
+
 function registerIPC() {
+  ipcMain.handle("kiln:plan-batch", async (event, input: unknown) => {
+    sender(event);
+    return planBatch(input);
+  });
+  ipcMain.handle("kiln:choose-batch-folder", async (event) => {
+    sender(event);
+    const choice = await dialog.showOpenDialog(window!, {
+      title: "Choose a folder of models",
+      properties: ["openDirectory"],
+    });
+    return choice.canceled || !choice.filePaths[0] ? null : planBatch(choice.filePaths[0]);
+  });
+  ipcMain.handle("kiln:choose-batch-output", async (event, id: unknown) => {
+    sender(event);
+    const plan = batchPlan(id);
+    if (runningBatch === plan.id)
+      throw new Error("Wait for folder processing to finish before changing its output.");
+    const choice = await dialog.showOpenDialog(window!, {
+      title: "Choose the output folder",
+      defaultPath: plan.outputDir,
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (choice.canceled || !choice.filePaths[0]) return null;
+    if (runningBatch === plan.id)
+      throw new Error("Wait for folder processing to finish before changing its output.");
+    const outputDir = path.resolve(choice.filePaths[0]);
+    const items = await scanBatch(
+      plan.sourceDir,
+      outputDir,
+      (await environment()).supportedFormats,
+    );
+    if (runningBatch === plan.id)
+      throw new Error("Wait for folder processing to finish before changing its output.");
+    plan.outputDir = outputDir;
+    plan.items = items;
+    return plan;
+  });
+  ipcMain.handle("kiln:run-batch", async (event, id: unknown, options: unknown) => {
+    sender(event);
+    return runBatch(batchPlan(id), options);
+  });
+
   ipcMain.handle("kiln:environment", async (event) => {
     sender(event);
     return environment();
@@ -123,6 +334,7 @@ function registerIPC() {
   );
   ipcMain.handle("kiln:cancel", (event) => {
     sender(event);
+    if (runningBatch) batchCancelled = true;
     engine.cancel();
   });
   ipcMain.handle("kiln:export", async (event, resultId: unknown): Promise<ExportReceipt | null> => {
@@ -131,9 +343,7 @@ function registerIPC() {
     if (!result) throw new Error("Optimize and inspect the result before exporting.");
     const source = assets.get(result.info.sourceId);
     if (!source) throw new Error("The source asset is no longer available.");
-    const stem = [...path.parse(source.info.name).name.replace(/[<>:"/\\|?*]/g, "_")]
-      .map((character) => (character.charCodeAt(0) < 32 ? "_" : character))
-      .join("");
+    const stem = sanitizeStem(path.parse(source.info.name).name);
     const choice = await dialog.showSaveDialog(window!, {
       title: "Export for the web",
       defaultPath: path.join(app.getPath("downloads"), `${stem}_public.glb`),
@@ -244,7 +454,10 @@ async function boot() {
       blenderPath: configured.blenderPath,
     },
     (progress) => {
-      if (window && !window.isDestroyed()) window.webContents.send("kiln:progress", progress);
+      const [from, to] = progressSpan ?? [0, 100];
+      const percent = Math.round(from + (progress.percent * (to - from)) / 100);
+      if (window && !window.isDestroyed())
+        window.webContents.send("kiln:progress", { ...progress, percent });
     },
   );
   protocol.handle("kiln", async (request) => {

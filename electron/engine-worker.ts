@@ -19,6 +19,9 @@ async function handle(request: WorkerRequest) {
       case "environment":
         value = await service.environment();
         break;
+      case "releaseAsset":
+        value = await service.releaseAsset(String(args[0]));
+        break;
       case "getAsset":
         value = await service.getAsset(String(args[0]));
         break;

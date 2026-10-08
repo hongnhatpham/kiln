@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AssetInfo,
+  BatchPlan,
   EnvironmentInfo,
   ExportReceipt,
   KilnAPI,
@@ -9,6 +10,7 @@ import type {
   ProgressUpdate,
 } from "../shared/contracts.ts";
 import { PRESETS } from "../shared/presets.ts";
+import { BatchView } from "./components/BatchView.tsx";
 import { Header } from "./components/Header.tsx";
 import { CatalogRecord } from "./components/CatalogRecord.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
@@ -18,9 +20,11 @@ import { errorMessage } from "./lib/format.ts";
 export type Busy =
   | { kind: "import"; fileName: string | null }
   | { kind: "optimize" }
-  | { kind: "export" };
+  | { kind: "export" }
+  | { kind: "scan" }
+  | { kind: "batch" };
 
-export type AppAction = "choose" | "blender" | "retry-optimize" | "dismiss";
+export type AppAction = "choose" | "choose-folder" | "blender" | "retry-optimize" | "dismiss";
 export interface AppError {
   title: string;
   message: string;
@@ -41,9 +45,31 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** A folder being processed. While set, it replaces the single-model stage. */
+  const [batch, setBatch] = useState<BatchPlan | null>(null);
+  /** Settings of the last folder run, to tell when a re-run would change the results. */
+  const [batchOptions, setBatchOptions] = useState<OptimizationOptions | null>(null);
   const cancelling = useRef(false);
 
   useEffect(() => api.onProgress(setProgress), [api]);
+  useEffect(
+    () =>
+      api.onBatch((update) => {
+        // Each model starts its own progress from zero.
+        if (update.item.status === "processing") setProgress(null);
+        setBatch((current) =>
+          current?.id === update.batchId
+            ? {
+                ...current,
+                items: current.items.map((item, index) =>
+                  index === update.index ? update.item : item,
+                ),
+              }
+            : current,
+        );
+      }),
+    [api],
+  );
   useEffect(() => {
     api.environment().then(setEnvironment, () => setEnvironment(null));
   }, [api]);
@@ -51,6 +77,10 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
   const stale = useMemo(
     () => !!result && JSON.stringify(result.options) !== JSON.stringify(options),
     [result, options],
+  );
+  const batchStale = useMemo(
+    () => !!batchOptions && JSON.stringify(batchOptions) !== JSON.stringify(options),
+    [batchOptions, options],
   );
 
   const run = useCallback(
@@ -97,25 +127,59 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
       setAsset(next);
       setResult(null);
       setReceipt(null);
+      setBatch(null);
     },
     [run, environment],
   );
 
   const choose = useCallback(() => openAsset(() => api.chooseAsset(), null), [api, openAsset]);
 
+  const openFolder = useCallback(
+    async (load: () => Promise<BatchPlan | null>) => {
+      const next = await run({ kind: "scan" }, load, (message) => ({
+        title: "This folder could not be read",
+        message,
+        actions: ["choose-folder"],
+      }));
+      if (!next) return;
+      setBatch(next);
+      setBatchOptions(null);
+      setAsset(null);
+      setResult(null);
+      setReceipt(null);
+    },
+    [run],
+  );
+
+  const chooseFolder = useCallback(
+    () => openFolder(() => api.chooseBatchFolder()),
+    [api, openFolder],
+  );
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "o" && !busy) {
         event.preventDefault();
-        void choose();
+        void (event.shiftKey ? chooseFolder() : choose());
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, choose]);
+  }, [busy, choose, chooseFolder]);
 
-  const dropFile = useCallback(
-    (file: File) => {
+  const drop = useCallback(
+    (file: File, isFolder: boolean) => {
+      if (isFolder) {
+        const path = api.filePath(file);
+        if (path) void openFolder(() => api.planBatch(path));
+        else
+          setError({
+            title: "Kiln couldn't find this folder on disk",
+            message: "Drop a folder from a local drive, or choose it from the file browser.",
+            actions: ["choose-folder"],
+          });
+        return;
+      }
       const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
       const supported = (environment?.supportedFormats ?? []).map((format) =>
         format.replace(/^\./, "").toLowerCase(),
@@ -142,7 +206,7 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
       }
       void openAsset(() => api.importAsset(path), file.name);
     },
-    [api, environment, openAsset],
+    [api, environment, openAsset, openFolder],
   );
 
   const optimize = useCallback(async () => {
@@ -175,6 +239,51 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
     if (saved) setReceipt(saved);
   }, [api, result, run]);
 
+  const processFolder = useCallback(async () => {
+    if (!batch) return;
+    const used = options;
+    // Every model is checked again on each run, so start the list fresh.
+    setBatch({
+      ...batch,
+      items: batch.items.map(({ relativePath, sourceBytes }) => ({
+        relativePath,
+        sourceBytes,
+        status: "waiting",
+      })),
+    });
+    const final = await run(
+      { kind: "batch" },
+      () => api.runBatch(batch.id, used),
+      (message) => ({ title: "Processing stopped", message, actions: ["dismiss"] }),
+    );
+    if (!final) return;
+    setBatch(final);
+    setBatchOptions(used);
+    if (cancelling.current)
+      setNotice("Stopped. Process again to continue. Finished models are kept and skipped.");
+  }, [api, batch, options, run]);
+
+  const changeOutput = useCallback(async () => {
+    if (!batch) return;
+    try {
+      const next = await api.chooseBatchOutput(batch.id);
+      if (next) setBatch(next);
+    } catch (caught) {
+      setError({
+        title: "This output folder can't be used",
+        message: errorMessage(caught),
+        actions: ["dismiss"],
+      });
+    }
+  }, [api, batch]);
+
+  const closeFolder = useCallback(() => {
+    setBatch(null);
+    setBatchOptions(null);
+    setError(null);
+    setNotice(null);
+  }, []);
+
   const cancel = useCallback(() => {
     cancelling.current = true;
     void api.cancel();
@@ -204,52 +313,76 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
   const act = useCallback(
     (action: AppAction) => {
       if (action === "choose") void choose();
+      else if (action === "choose-folder") void chooseFolder();
       else if (action === "blender") void locateBlender();
       else if (action === "retry-optimize") void optimize();
       else setError(null);
     },
-    [choose, locateBlender, optimize],
+    [choose, chooseFolder, locateBlender, optimize],
   );
 
   return (
     <div className="app">
       <Header
         asset={asset}
+        folder={batch?.sourceDir ?? null}
         environment={environment}
         busy={!!busy}
         mock={mock}
         onChoose={choose}
+        onChooseFolder={chooseFolder}
         onLocateBlender={locateBlender}
       />
       <main className="workspace">
-        <section className="workspace-main" aria-label="Preview and record">
-          <Stage
-            asset={asset}
-            result={result}
-            busy={busy}
+        {batch ? (
+          <BatchView
+            batch={batch}
+            running={busy?.kind === "batch"}
+            disabled={!!busy}
             progress={progress}
             error={error}
-            environment={environment}
-            onDropFile={dropFile}
-            onChoose={choose}
-            onCancel={cancel}
+            blenderLinked={!!environment?.blenderPath}
+            onDrop={drop}
+            onChangeOutput={changeOutput}
+            onChooseFolder={chooseFolder}
+            onClose={closeFolder}
+            onReveal={reveal}
+            onLocateBlender={locateBlender}
             onAction={act}
           />
-          {asset && (
-            <CatalogRecord
+        ) : (
+          <section className="workspace-main" aria-label="Preview and record">
+            <Stage
               asset={asset}
               result={result}
-              stale={stale}
-              receipt={receipt}
-              exporting={busy?.kind === "export"}
-              disabled={!!busy}
-              onExport={exportResult}
-              onReveal={reveal}
+              busy={busy}
+              progress={progress}
+              error={error}
+              environment={environment}
+              onDrop={drop}
+              onChoose={choose}
+              onChooseFolder={chooseFolder}
+              onCancel={cancel}
+              onAction={act}
             />
-          )}
-        </section>
+            {asset && (
+              <CatalogRecord
+                asset={asset}
+                result={result}
+                stale={stale}
+                receipt={receipt}
+                exporting={busy?.kind === "export"}
+                disabled={!!busy}
+                onExport={exportResult}
+                onReveal={reveal}
+              />
+            )}
+          </section>
+        )}
         <SettingsPanel
           asset={asset}
+          batch={batch}
+          batchStale={batchStale}
           options={options}
           result={result}
           stale={stale}
@@ -257,7 +390,7 @@ export function App({ api, mock }: { api: KilnAPI; mock: boolean }) {
           progress={progress}
           notice={notice}
           onChange={setOptions}
-          onOptimize={optimize}
+          onOptimize={batch ? processFolder : optimize}
           onCancel={cancel}
         />
       </main>

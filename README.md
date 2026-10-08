@@ -14,22 +14,36 @@ Free for Windows, macOS and Linux. No other software is needed to get started.
 
 Go to [the download page](https://github.com/hongnhatpham/kiln/releases/latest) and pick the file for your computer.
 
-| Your computer                         | Download this file           | Then                                                          |
-| ------------------------------------- | ---------------------------- | ------------------------------------------------------------- |
-| Windows 10 or 11, Intel/AMD           | `Kiln-Windows-x64-Setup.exe` | Open it and follow the steps. Kiln appears in the Start menu. |
-| Mac with Apple Silicon (M1 and later) | `Kiln-macOS-arm64.dmg`       | Open it and drag Kiln into Applications.                      |
-| Mac with an Intel processor           | `Kiln-macOS-x64.dmg`         | Open it and drag Kiln into Applications.                      |
-| Ubuntu, Debian, Mint                  | `Kiln-Linux-x64.deb`         | Open it with your software installer.                         |
-| Fedora, RHEL, openSUSE                | `Kiln-Linux-x64.rpm`         | Open it with your software installer.                         |
+| Your computer               | Download this file           | Then                                                          |
+| --------------------------- | ---------------------------- | ------------------------------------------------------------- |
+| Windows 10 or 11, Intel/AMD | `Kiln-Windows-x64-Setup.exe` | Open it and follow the steps. Kiln appears in the Start menu. |
+| Mac                         | Nothing, see below           | Paste one line into Terminal.                                 |
+| Ubuntu, Debian, Mint        | `Kiln-Linux-x64.deb`         | Open it with your software installer.                         |
+| Fedora, RHEL, openSUSE      | `Kiln-Linux-x64.rpm`         | Open it with your software installer.                         |
 
-**Not sure which Mac you have?** Click the Apple menu, then **About This Mac**. If it says **Chip: Apple M1** (or M2, M3 and so on), choose Apple Silicon. If it says **Processor: Intel**, choose Intel.
+### On a Mac
+
+The easiest way is one line in Terminal. It picks the right version for your Mac, checks the download and installs Kiln for your user account only. It also works on many work and university Macs where security settings are locked.
+
+1. Open **Terminal**: press **Cmd + Space**, type `Terminal` and press **Return**.
+2. Paste this line and press **Return**:
+
+   ```sh
+   curl -fsSL https://github.com/hongnhatpham/kiln/releases/latest/download/install.sh | sh
+   ```
+
+3. Open Kiln from Spotlight, or from **Applications** in your home folder.
+
+Run the same line again later to update.
+
+**Prefer a regular download?** Get `Kiln-macOS-arm64.dmg` for a Mac with Apple Silicon (M1 and later) or `Kiln-macOS-x64.dmg` for an Intel Mac, open it and drag Kiln into Applications. Not sure which Mac you have? Click the Apple menu, then **About This Mac**. **Chip: Apple M1** (or M2, M3 and so on) means Apple Silicon. **Processor: Intel** means Intel.
 
 ### The first time you open Kiln
 
 Kiln is not yet signed with a paid developer certificate, so your computer may ask you to confirm that you trust it when opening a new version.
 
 - **Windows:** if you see "Windows protected your PC", click **More info**, then **Run anyway**.
-- **macOS:** if Kiln is blocked, open **System Settings > Privacy & Security**, scroll down and click **Open Anyway**.
+- **macOS (DMG only):** if Kiln is blocked, open **System Settings > Privacy & Security**, scroll down and click **Open Anyway**. If that option is locked on a work or university Mac, use the Terminal line above instead.
 
 You can check each download against `SHA256SUMS.txt` on the download page.
 
@@ -40,6 +54,15 @@ You can check each download against `SHA256SUMS.txt` on the download page.
 3. **Optimize.** Click **Optimize** and wait for the result.
 4. **Compare up close.** Drag the divider to see the original and the result side by side. Zoom in, try **1:1 detail**, and switch to **Raking** light to reveal bumps and carving. Check every area that matters to you.
 5. **Export.** Click **Export GLB**. Kiln saves two files next to each other: the web-ready model and its recipe.
+
+### Process a whole folder
+
+Click **Open folder**, or drop a folder into the Kiln window. Kiln finds every model in it and in all the folders inside it, then optimizes each one with the quality you chose.
+
+- The web copies and their recipes go into a new folder beside the one you chose, named with `_public` at the end, for example `Scans_public`. Subfolders are kept, so every file is easy to find. Click **Change** to save somewhere else.
+- Run it again whenever you add new scans. Models that are already up to date are skipped, so only new or changed ones are processed. If you change the quality, every model is processed again.
+- If one model fails, Kiln notes why and carries on with the rest. Click **Stop** at any time; running it again continues where it stopped.
+- Folder processing does not show the side-by-side comparison. Open a few results on their own to check the detail before you publish.
 
 ### What you get
 
@@ -80,11 +103,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\kiln-install.ps1"
 **macOS or Linux (Terminal):**
 
 ```sh
-curl -fL https://github.com/hongnhatpham/kiln/releases/latest/download/install.sh -o /tmp/kiln-install.sh
-sh /tmp/kiln-install.sh
+curl -fsSL https://github.com/hongnhatpham/kiln/releases/latest/download/install.sh | sh
 ```
 
-- You can read the script before running it. Add `-DryRun` (Windows) or `--dry-run` (macOS and Linux) to preview what it would do.
+- You can read the script before running it: open the same address in a browser. Add `-DryRun` (Windows) or `| sh -s -- --dry-run` (macOS and Linux) to preview what it would do.
 - Windows and macOS scripts install for your user account only, in `%LOCALAPPDATA%\Programs\Kiln` or `~/Applications/Kiln.app`. To remove Kiln, delete that folder or app and its menu shortcut.
 - On Linux the script uses your normal package manager, which may ask for your password. Remove Kiln the same way you remove other packages.
 - Pick either the Windows Setup file or the script, not both.

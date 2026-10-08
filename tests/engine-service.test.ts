@@ -313,3 +313,39 @@ test("typed errors for bad input, unknown ids and cancellation", async () => {
     (e: unknown) => isKilnError(e, "cancelled") && (e as Error).name === "AbortError",
   );
 });
+
+test("release removes one asset and its result work directories, preserving originals", async () => {
+  const source = await service.importAsset(glbPath, "release-import");
+  const result = await service.optimize(source.info.id, PRESETS.detailed, "release-optimize");
+  const assetDir = path.join(
+    path.dirname(path.dirname(path.dirname(result.modelPath))),
+    "assets",
+    source.info.id,
+  );
+  await service.releaseAsset(source.info.id);
+  assert.equal(await service.getAsset(source.info.id), undefined);
+  assert.equal(await service.getResult(result.info.id), undefined);
+  await assert.rejects(fs.stat(path.dirname(result.modelPath)), { code: "ENOENT" });
+  await assert.rejects(fs.stat(assetDir), { code: "ENOENT" });
+  assert.equal(await sha(glbPath), sourceHash);
+  await service.releaseAsset(source.info.id);
+});
+
+test("release frees records even if one temporary folder cannot be removed", async (t) => {
+  const source = await service.importAsset(glbPath, "release-failed-import");
+  const result = await service.optimize(
+    source.info.id,
+    PRESETS.detailed,
+    "release-failed-optimize",
+  );
+  const rm = fs.rm.bind(fs);
+  t.mock.method(fs, "rm", async (...args: Parameters<typeof fs.rm>) => {
+    if (String(args[0]).endsWith(source.info.id)) throw new Error("injected cleanup failure");
+    return rm(...args);
+  });
+  await assert.rejects(service.releaseAsset(source.info.id), /temporary model files/);
+  assert.equal(await service.getAsset(source.info.id), undefined);
+  assert.equal(await service.getResult(result.info.id), undefined);
+  await assert.rejects(fs.stat(path.dirname(result.modelPath)), { code: "ENOENT" });
+  assert.equal(await sha(glbPath), sourceHash);
+});
