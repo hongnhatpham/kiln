@@ -1,10 +1,10 @@
 Kiln prepares archival 3D assets for public web viewing on your computer.
 
-## New in 0.2.0
+## New in 0.3.0
 
-- **Process a whole folder.** Drop a folder or choose Process a folder. Kiln optimizes every model inside it and its subfolders, saves the results in a matching `_public` folder, and skips models that are already up to date.
-- **Clay and Wire views.** Switch the stage to Clay to see the shape without textures, or Wire to see every triangle edge. Use them to check how much detail is lost when you remove triangles.
-- **macOS no longer reports Kiln as damaged.** macOS builds now carry a valid signature, so macOS shows the normal approval prompt instead.
+- **Preview a folder as it processes.** Click any finished model in the folder list to compare it with its original on the stage, even while the rest are still processing. The preview shows the exported web copy itself.
+- **Step through every result.** Use the arrows under the model, or the Left and Right keys, to move from one finished model to the next. The view, surface and lighting stay the same, so models are easy to compare. Press Esc to close.
+- **Make room for the preview or the list.** Drag the line between them to share the space, or hide either one. A hidden list still shows which model is processing, and a hidden preview keeps its arrows and reopens on the same view.
 
 ## Install
 
